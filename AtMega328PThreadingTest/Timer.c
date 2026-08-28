@@ -32,7 +32,7 @@ uint8_t timer_add(uint8_t thread_id, uint16_t ticks)
     
     uint8_t node_id = dl_create_unlinked(&timer_list);
 
-    if (node_id == 0xFF)
+    if (node_id == OBJECT_ID_INVALID)
     {
         INTERRUPT_LOWER_LEVEL();
 
@@ -75,7 +75,7 @@ void timer_cancel(uint8_t timer_id)
 // Only called from a timer ISR.
 void advance_active_timers()
 {
-    for (uint8_t timer_id = timer_list.first_linked, next_timer_id; timer_id != 0xFF; timer_id = next_timer_id)
+    for (uint8_t timer_id = timer_list.first_linked, next_timer_id; timer_id != OBJECT_ID_INVALID; timer_id = next_timer_id)
     {
         next_timer_id = timer_list.nodes[timer_id].next;
 
@@ -83,14 +83,14 @@ void advance_active_timers()
 
         if (!--timer->ticks)
         {
-            thread_append_to_run_queue(timer->thread_id);
+            thread_ensure_runnable(timer->thread_id);
             timer_cancel(timer_id);
         }
         else
         {
             // Beyond this point in the list, no timers can possibly be elapsed.
             // Decrement the rest, but no need to check for zero.
-            for (timer_id = next_timer_id; timer_id != 0xFF; timer_id = timer_list.nodes[timer_id].next)
+            for (timer_id = next_timer_id; timer_id != OBJECT_ID_INVALID; timer_id = timer_list.nodes[timer_id].next)
             {
                 --timers[timer_id].ticks;
             }

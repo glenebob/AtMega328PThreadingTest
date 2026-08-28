@@ -20,7 +20,7 @@
 
 typedef struct
 {
-//    bool active;
+    bool active;
     uint8_t *buffer;
     uint8_t buffer_length;
     uint8_t offset;
@@ -41,7 +41,10 @@ static uint16_t getchar_timeout;
 
 void io_task_init()
 {
+    read_task.active = false;
     read_task.thread_id = 0xFF;
+
+    write_task.active = false;
     write_task.thread_id = 0xFF;
 
     UBRR0H = (uint8_t) (BAUDRATE >> 8);
@@ -60,33 +63,6 @@ void io_task_init()
 
     getchar_timeout = 0;
 };
-
-__attribute__((naked))
-void io_dispatch()
-{
-    SAVE_CONTEXT();
-
-    thread_remove_from_run_queue(current_thread_id);
-
-    if (runnable_thread_count)
-    {
-        current_thread_id = thread_get_first_runnable();
-    }
-    else
-    {
-        current_thread_id = 0;
-    }
-
-    current_thread = thread_get(current_thread_id);
-
-    if (current_thread->ticks != 0xFF)
-    {
-        current_thread->ticks = 10;
-    }
-
-    INIT_OR_RESTORE_CONTEXT();
-    DISPATCH();
-}
 
 int io_read(uint8_t *buffer, uint8_t buffer_length, uint16_t timeout)
 {
@@ -113,6 +89,7 @@ int io_read(uint8_t *buffer, uint8_t buffer_length, uint16_t timeout)
         }
     }
 
+    read_task.active = true;
     read_task.thread_id = current_thread_id;
 
     if (timeout > 0)
@@ -124,13 +101,12 @@ int io_read(uint8_t *buffer, uint8_t buffer_length, uint16_t timeout)
         read_task.timer_id = 0xFF;
     }
 
-    INTERRUPT_LOWER_LEVEL();
-
-    cli();
-    io_dispatch();
+    thread_block(current_thread_id);
+    thread_yield_dispatch();
 
     int return_value = read_task.offset < read_task.buffer_length ? -1 : read_task.buffer_length;
 
+    read_task.active = false;
     read_task.thread_id = 0xFF;
 
     return return_value;
@@ -161,6 +137,7 @@ int io_write(uint8_t *buffer, uint8_t buffer_length, uint16_t timeout)
         }
     }
 
+    write_task.active = true;
     write_task.thread_id = current_thread_id;
 
     if (timeout > 0)
@@ -169,16 +146,15 @@ int io_write(uint8_t *buffer, uint8_t buffer_length, uint16_t timeout)
     }
     else
     {
-        write_task.timer_id = -1;
+        write_task.timer_id = 0xFF;
     }
 
-    INTERRUPT_LOWER_LEVEL();
-    
-    cli();
-    io_dispatch();
+    thread_block(current_thread_id);
+    thread_yield_dispatch();
     
     int return_value = write_task.offset < write_task.buffer_length ? -1 : write_task.buffer_length;
 
+    write_task.active = false;
     write_task.thread_id = 0xFF;
 
     return return_value;
@@ -233,13 +209,17 @@ void set_getchar_timeout(uint16_t timeout)
 
 ISR(USART_RX_vect)
 {
-    if (read_task.thread_id != 0xFF)
+    // Always clear the USART buffer regardless of where the byte might end up.
+    uint8_t b = UDR0;
+    
+    if (read_task.active)
     {
-        read_task.buffer[read_task.offset++] = UDR0;
+        read_task.buffer[read_task.offset++] = b;
 
         if (read_task.offset == read_task.buffer_length)
         {
-            thread_append_to_run_queue(read_task.thread_id);
+            read_task.active = false;
+            thread_ensure_runnable(read_task.thread_id);
 
             if (read_task.timer_id != 0xFF)
             {
@@ -247,22 +227,18 @@ ISR(USART_RX_vect)
             }
         }
     }
-    else
-    {
-        // This useless-appearing statement clears the USART buffer.
-        UDR0;
-    }
 }
 
 ISR(USART_TX_vect)
 {
-    if (write_task.thread_id != 0xFF)
+    if (write_task.active)
     {
         UDR0 = write_task.buffer[write_task.offset++];
         
         if (write_task.offset == write_task.buffer_length)
         {
-            thread_append_to_run_queue(write_task.thread_id);
+            write_task.active = false;
+            thread_ensure_runnable(write_task.thread_id);
 
             if (write_task.timer_id != 0xFF)
             {

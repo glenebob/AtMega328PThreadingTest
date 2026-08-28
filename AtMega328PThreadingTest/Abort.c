@@ -10,7 +10,7 @@ static const uint32_t bit_delays[] = { 200000, 800000 };
 
 void abort()
 {
-    exit(ERR_CLIB_ABORT);
+    exit(ERR_ABORT);
 }
 
 void exit(int status)
