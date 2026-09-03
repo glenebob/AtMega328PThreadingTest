@@ -10,8 +10,8 @@
 #include "Types.h"
 #include "Error.h"
 #include "Interrupt.h"
-#include "Assembly.h"
 #include "Timer.h"
+#include "Thread.h"
 
 #include "AsyncIo.h"
 

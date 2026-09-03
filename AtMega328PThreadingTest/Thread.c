@@ -15,9 +15,9 @@
 #define STACK_SIZE_KERNEL 64
 #define STACK_SIZE_IDLE 64
 
-thread_t threads[THREAD_COUNT];
-double_linked_list_node_t thread_list_nodes[THREAD_COUNT];
-double_linked_list_t thread_run_queue;
+static thread_t threads[THREAD_COUNT];
+static double_linked_list_node_t thread_nodes[THREAD_COUNT];
+static double_linked_list_t thread_run_queue;
 
 uint8_t runnable_thread_count;
 uint8_t current_thread_id;
@@ -64,7 +64,7 @@ void threads_initialize(thread_entry_t idle_entry)
     current_thread_id = OBJECT_ID_INVALID;
     current_thread = NULL;
 
-    dl_initialize(&thread_run_queue, thread_list_nodes, THREAD_COUNT);
+    dl_initialize(&thread_run_queue, &thread_nodes[0], THREAD_COUNT);
 
     // Create the kernel thread (ID: 0). We are running in the kernel thread,
     // so we don't need to set the saved stack pointer or initialize
@@ -89,14 +89,16 @@ uint8_t thread_create_unlinked(thread_entry_t entry_point, void *argument, bool 
     uint8_t thread_id = node_id;
     thread_t* thread = &threads[thread_id];
 
-    typedef void (*global_thread_entry_t)();
-
     typedef struct
     {
         uint8_t r1_register;
-        uint8_t r0_register_placeholder;
+        uint8_t r0_register_placeholder_not_used;
         uint8_t status_register;
-        global_thread_entry_t return_address;
+        struct
+        {
+            uint8_t high;
+            uint8_t low;
+        } return_address;
     } stack_init_block_t;
 
     stack_init_block_t *stack_init_block;
@@ -112,7 +114,8 @@ uint8_t thread_create_unlinked(thread_entry_t entry_point, void *argument, bool 
 
     stack_init_block->r1_register = 0;
     stack_init_block->status_register = 0;
-    stack_init_block->return_address = (global_thread_entry_t) ((((uint16_t) global_thread_entry << 8)) | ((uint16_t) global_thread_entry >> 8));
+    stack_init_block->return_address.high = (uint16_t) global_thread_entry >> 8;
+    stack_init_block->return_address.low = (uint16_t) global_thread_entry & 0xFF;
 
     thread->saved_stack_pointer = (uint16_t) (((void*) stack_init_block) - sizeof(uint16_t*) - 29);
     thread->entry_point = entry_point;

@@ -35,11 +35,14 @@ void thread_idle_entry(void *unused_arguments)
         INTERRUPT_LOWER_LEVEL();
 
         sleep_cpu();
-    }    
-}    
+    }
+}
 
 void kernel_init_task(void *unused_arguments)
 {
+    timers_initialize();
+    io_task_init();
+
     // Create the idle thread (ID: 1).
     thread_create_unlinked(thread_idle_entry, NULL, false, THREAD_STATUS_PERMANENT);
 
@@ -146,7 +149,24 @@ void thread_4_entry(void *unused_arguments)
     {
         if ((i % 25) == 0)
         {
-            printf("Kernel task...\n");
+            sleep(1000);
+
+            printf("Wheeeeeeeeeeeeeeeeeeeeeeeeee");
+            printf("eeeeeeeeeeeeeeeeeeeeeeeeeee\n");
+            printf("eeeeeeeeeeeeeeeeeeeeeeeeeeee");
+            printf("eeeeeeeeeeeeeeeeeeeeeeeeeee\n");
+            printf("eeeeeeeeeeeeeeeeeeeeeeeeeeee");
+            printf("eeeeeeeeeeeeeeeeeeeeeeeeeee\n");
+            printf("eeeeeeeeeeeeeeeeeeeeeeeeeeee");
+            printf("eeeeeeeeeeeeeeeeeeeeeeeeeee\n");
+            printf("eeeeeeeeeeeeeeeeeeeeeeeeeeee");
+            printf("eeeeeeeeeeeeeeeeeeeeeeeeeee\n");
+            printf("eeeeeeeeeeeeeeeeeeeeeeeeeeee");
+            printf("eeeeeeeeeeeeeeeeeeeeeeeeee!\n");
+
+            sleep(1000);
+
+            printf("Kernel task (watch the LED)...\n");
 
             post_kernel_task(test_kernel_task, NULL);
 
@@ -189,14 +209,14 @@ int main()
 {
     INTERRUPT_INITIALIZE();
 
-    timers_initialize();
     task_queue_init();
     threads_initialize(thread_idle_entry);
-    io_task_init();
 
+    // Become the kernel thread.
     current_thread_id = THREAD_ID_KERNEL;
     current_thread = thread_get(current_thread_id);
 
+    // Queue up remaining initialization.
     task_queue_push(kernel_init_task, NULL);
 
     INTERRUPT_LOWER_LEVEL();

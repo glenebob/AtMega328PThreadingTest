@@ -17,13 +17,13 @@ typedef struct
     uint16_t ticks;
 } timer_t;
 
-timer_t timers[TIMER_COUNT];
-double_linked_list_node_t timer_list_nodes[TIMER_COUNT];
-double_linked_list_t timer_list;
+static timer_t timers[TIMER_COUNT];
+static double_linked_list_node_t timer_nodes[TIMER_COUNT];
+static double_linked_list_t timer_list;
 
 void timers_initialize()
 {
-    dl_initialize(&timer_list, timer_list_nodes, TIMER_COUNT);
+    dl_initialize(&timer_list, &timer_nodes[0], TIMER_COUNT);
 }
 
 uint8_t timer_add(uint8_t thread_id, uint16_t ticks)
@@ -44,7 +44,7 @@ uint8_t timer_add(uint8_t thread_id, uint16_t ticks)
     timer->thread_id = thread_id;
     timer->ticks = ticks;
 
-    for (uint8_t timer_id = timer_list.first_linked; timer_id != 0xFF; timer_id = timer_list.nodes[timer_id].next)
+    for (uint8_t timer_id = timer_list.first_linked; timer_id != 0xFF; timer_id = timer_nodes[timer_id].next)
     {
         timer = &timers[timer_id];
 
@@ -77,7 +77,7 @@ void advance_active_timers()
 {
     for (uint8_t timer_id = timer_list.first_linked, next_timer_id; timer_id != OBJECT_ID_INVALID; timer_id = next_timer_id)
     {
-        next_timer_id = timer_list.nodes[timer_id].next;
+        next_timer_id = timer_nodes[timer_id].next;
 
         timer_t *timer = &timers[timer_id];
 
@@ -90,7 +90,7 @@ void advance_active_timers()
         {
             // Beyond this point in the list, no timers can possibly be elapsed.
             // Decrement the rest, but no need to check for zero.
-            for (timer_id = next_timer_id; timer_id != OBJECT_ID_INVALID; timer_id = timer_list.nodes[timer_id].next)
+            for (timer_id = next_timer_id; timer_id != OBJECT_ID_INVALID; timer_id = timer_nodes[timer_id].next)
             {
                 --timers[timer_id].ticks;
             }

@@ -16,7 +16,7 @@ typedef struct
     double_linked_list_node_t *nodes;
 } double_linked_list_t;
 
-void dl_initialize(double_linked_list_t *list, double_linked_list_node_t *first, uint8_t count);
+void dl_initialize(double_linked_list_t *list, double_linked_list_node_t *first_node, uint8_t count);
 uint8_t dl_create_unlinked(double_linked_list_t *list);
 void dl_append(double_linked_list_t *list, uint8_t node_id);
 void dl_insert(double_linked_list_t *list, uint8_t node_id, uint8_t before_node_id);
