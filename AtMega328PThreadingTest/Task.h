@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Types.h"
+
 typedef void (*task_handler_t)(void*);
 
 void task_queue_init();

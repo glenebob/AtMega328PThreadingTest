@@ -42,7 +42,7 @@ void task_queue_push(task_handler_t handler, void *arguments)
     task_queue.tasks[task_queue.next_in].handler = handler;
     task_queue.tasks[task_queue.next_in].arguments = arguments;
 
-    if (task_queue.next_out == 0xFF)
+    if (task_queue.next_out == OBJECT_ID_INVALID)
     {
         task_queue.next_out = task_queue.next_in;
     }
@@ -63,7 +63,7 @@ bool task_queue_pop(task_handler_t *handler, void **arguments)
 {
     INTERRUPT_RAISE_LEVEL();
 
-    if (task_queue.next_out == 0xFF)
+    if (task_queue.next_out == OBJECT_ID_INVALID)
     {
         INTERRUPT_LOWER_LEVEL();
 
@@ -82,7 +82,7 @@ bool task_queue_pop(task_handler_t *handler, void **arguments)
 
     if (task_queue.next_out == task_queue.next_in)
     {
-        task_queue.next_out = 0xFF;
+        task_queue.next_out = OBJECT_ID_INVALID;
     }
 
     INTERRUPT_LOWER_LEVEL();

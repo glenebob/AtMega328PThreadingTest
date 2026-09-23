@@ -9,6 +9,7 @@
 #include <avr/sleep.h>
 #include <avr/portpins.h>
 #include <avr/eeprom.h>
+#include <avr/pgmspace.h>
 
 #include "Types.h"
 #include "Interrupt.h"
@@ -17,34 +18,43 @@
 #include "Thread.h"
 #include "AsyncIo.h"
 
-void thread_root_entry(void*);
+const __flash char string_iterations[] PROGMEM = "%s: Iterations: %lu, Read: %lu, Write: %lu, Idle Spins: %lu\n";
 
-static volatile uint32_t idle_spin_count = 0;
+const __flash char string_wheee[] PROGMEM =
+    "Begin big single write\r\n"
+    "Wheeeeeeeeeeeeeeeeeeeeeee"
+    "eeeeeeeeeeeeeeeeeeeeeeeee\r\n"
+    "eeeeeeeeeeeeeeeeeeeeeeeee"
+    "eeeeeeeeeeeeeeeeeeeeeeeee\r\n"
+    "eeeeeeeeeeeeeeeeeeeeeeeee"
+    "eeeeeeeeeeeeeeeeeeeeeeeee\r\n"
+    "eeeeeeeeeeeeeeeeeeeeeeeee"
+    "eeeeeeeeeeeeeeeeeeeeeeeee\r\n"
+    "End big single write\r\n";
+
+void thread_root_entry(void*);
 
 void thread_idle_entry(void *unused_arguments)
 {
-    set_sleep_mode(SLEEP_MODE_IDLE);
-    sleep_enable();
-
     for (;;)
     {
         INTERRUPT_RAISE_LEVEL();
-
         ++idle_spin_count;
-
         INTERRUPT_LOWER_LEVEL();
-
         sleep_cpu();
     }
 }
 
 void kernel_init_task(void *unused_arguments)
 {
+    set_sleep_mode(SLEEP_MODE_IDLE);
+    sleep_enable();
+
     timers_initialize();
     io_task_init();
 
     // Create the idle thread (ID: 1).
-    thread_create_unlinked(thread_idle_entry, NULL, false, THREAD_STATUS_PERMANENT);
+    thread_create_unlinked(thread_idle_entry, NULL, false);
 
     thread_create(thread_root_entry, NULL, true);
 
@@ -98,18 +108,9 @@ void thread_3_entry(void *unused_arguments)
 {
     for (int i = 0; i < 10; ++i)
     {
-        void *dynamic = malloc(32);
-
-        if (!dynamic)
-        {
-            exit(ERR_MALLOC_FAILED);
-        }
-
         sleep(150);
 
         PINB = (1 << PB5);
-
-        free(dynamic);
     }
 
     thread_create(thread_3_entry, NULL, true);
@@ -117,12 +118,23 @@ void thread_3_entry(void *unused_arguments)
 
 void test_kernel_task(void *unused_arguments)
 {
-    for (int i = 0; i < 20; ++i)
+    uint32_t read_count = 0;
+    uint32_t write_count = 0;
+
+    write_count += printf_P(PSTR("Kernel Thread starting...\n"));
+
+    for (uint32_t i = 0; i < 5; ++i)
     {
-        for (uint32_t i = 0; i < 50000; ++i);
+        sleep(250);
 
         PINB = (1 << PB5);
+
+        write_count += printf_P(string_iterations, "Kernel Thread", i, read_count, write_count, idle_spin_count);
     }
+
+    sleep(250);
+
+    printf_P(PSTR("Kernel Thread exiting...\n"));
 }
 
 void thread_4_entry(void *unused_arguments)
@@ -137,7 +149,8 @@ void thread_4_entry(void *unused_arguments)
         sleep(5);
     }        
 
-    printf(" Let's go!\n");
+    printf_P(PSTR(" Let's go!\n"));
+
     sleep(1000);
 
     uint32_t read_count = 0;
@@ -147,38 +160,40 @@ void thread_4_entry(void *unused_arguments)
 
     for (uint32_t i = 0; ; ++i)
     {
-        if ((i % 25) == 0)
+        if ((i % 9) == 0)
         {
             sleep(1000);
 
-            printf("Wheeeeeeeeeeeeeeeeeeeeeeeeee");
-            printf("eeeeeeeeeeeeeeeeeeeeeeeeeee\n");
-            printf("eeeeeeeeeeeeeeeeeeeeeeeeeeee");
-            printf("eeeeeeeeeeeeeeeeeeeeeeeeeee\n");
-            printf("eeeeeeeeeeeeeeeeeeeeeeeeeeee");
-            printf("eeeeeeeeeeeeeeeeeeeeeeeeeee\n");
-            printf("eeeeeeeeeeeeeeeeeeeeeeeeeeee");
-            printf("eeeeeeeeeeeeeeeeeeeeeeeeeee\n");
-            printf("eeeeeeeeeeeeeeeeeeeeeeeeeeee");
-            printf("eeeeeeeeeeeeeeeeeeeeeeeeeee\n");
-            printf("eeeeeeeeeeeeeeeeeeeeeeeeeeee");
-            printf("eeeeeeeeeeeeeeeeeeeeeeeeee!\n");
+            printf_P(PSTR("Allocate, copy, print, and free %u bytes...\n"), sizeof(string_wheee));
+
+            char *dynamic = malloc(sizeof(string_wheee));
+
+            if (!dynamic)
+            {
+                exit(ERR_MALLOC_FAILED);
+            }
+
+            memcpy_P(dynamic, string_wheee, sizeof(string_wheee));
+
+            io_write((const uint8_t*) dynamic, (uint8_t) sizeof(string_wheee), 0);
+
+            free(dynamic);
 
             sleep(1000);
 
-            printf("Kernel task (watch the LED)...\n");
+            printf_P(PSTR("Kernel task...\n"));
 
             post_kernel_task(test_kernel_task, NULL);
 
-            printf("That was fun.\n");
+            printf_P(PSTR("That was fun.\n"));
 
-            length = printf("Iterations: %lu, Read: %lu, Write: %lu, Idle Spins: %lu\n", i, read_count, write_count, idle_spin_count);
+            length = printf_P(string_iterations, "Thread 4", i, read_count, write_count, idle_spin_count);
 
-            printf("Now what say ye? >");
+            printf_P(PSTR("Now what say ye? >"));
 
             if (fgets(line_buffer, sizeof(line_buffer), stdin) == NULL)
             {
-                printf("\n<read timeout>\n");
+                printf_P(PSTR("\n<read timeout>\n"));
             }
             else
             {
@@ -186,18 +201,18 @@ void thread_4_entry(void *unused_arguments)
                 
                 read_count += length;
 
-                printf("\nSaid ye: %s", line_buffer);
+                printf_P(PSTR("\nSaid ye: %s"), line_buffer);
                 
                 if (line_buffer[length - 1] != '\n')
                 {
-                    printf(" <buffer overflow>\n");
+                    printf_P(PSTR(" <buffer overflow>\n"));
                 }
             }                
 
             sleep(1000);
         }
 
-        length = printf("Iterations: %lu, Read: %lu, Write: %lu, Idle Spins: %lu\n", i, read_count, write_count, idle_spin_count);
+        length = printf_P(string_iterations, "Thread 4", i, read_count, write_count, idle_spin_count);
 
         write_count += length;
 
@@ -213,8 +228,7 @@ int main()
     threads_initialize(thread_idle_entry);
 
     // Become the kernel thread.
-    current_thread_id = THREAD_ID_KERNEL;
-    current_thread = thread_get(current_thread_id);
+    thread_set_current(THREAD_ID_KERNEL);
 
     // Queue up remaining initialization.
     task_queue_push(kernel_init_task, NULL);
@@ -233,6 +247,8 @@ int main()
 
         INTERRUPT_RAISE_LEVEL();
 
+        kernel_thread_is_active = false;
+        thread_block(THREAD_ID_KERNEL);
         thread_yield_dispatch();
     }
 }

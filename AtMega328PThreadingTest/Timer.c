@@ -85,6 +85,11 @@ void advance_active_timers()
         {
             thread_ensure_runnable(timer->thread_id);
             timer_cancel(timer_id);
+
+            if (timer->thread_id == 0)
+            {
+                thread_ensure_runnable(timer->thread_id);
+            }
         }
         else
         {

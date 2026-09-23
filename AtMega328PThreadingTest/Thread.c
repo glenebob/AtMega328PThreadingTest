@@ -9,10 +9,10 @@
 
 #include "Thread.h"
 
-#define THREAD_COUNT 7
+#define THREAD_COUNT 6
 
 #define STACK_SIZE_USER 256
-#define STACK_SIZE_KERNEL 64
+#define STACK_SIZE_KERNEL 256
 #define STACK_SIZE_IDLE 64
 
 static thread_t threads[THREAD_COUNT];
@@ -22,6 +22,9 @@ static double_linked_list_t thread_run_queue;
 uint8_t runnable_thread_count;
 uint8_t current_thread_id;
 thread_t *current_thread;
+bool kernel_thread_is_active;
+
+volatile uint32_t idle_spin_count = 0;
 
 static void global_thread_entry();
 
@@ -32,10 +35,11 @@ void threads_initialize(thread_entry_t idle_entry)
 {
     // Sanity check to make sure the total stack space does not crash into
     // the data segments.
-    uint16_t total_data_bytes = (uint16_t) &_end - (uint16_t )&__data_start;
+    uint16_t total_data_bytes = (uint16_t) &_end - (uint16_t ) &__data_start;
     uint16_t total_stacks_size = STACK_SIZE_KERNEL + STACK_SIZE_IDLE + ((THREAD_COUNT - 2) * STACK_SIZE_USER);
+    int16_t heap_size = 2048 - total_data_bytes - total_stacks_size;
 
-    if (total_stacks_size >= 2048 - total_data_bytes)
+    if (heap_size < 0)
     {
         exit(ERR_THREAD_STACK_HEAP_COLLISION);
     }
@@ -46,7 +50,7 @@ void threads_initialize(thread_entry_t idle_entry)
     uint8_t thread_id = 0;
 
     // Kernel thread - currently running
-    threads[thread_id].status = THREAD_STATUS_PERMANENT;
+    threads[thread_id].status = THREAD_STATUS_RUNNABLE;
     threads[thread_id].ticks = 0xFF;
 
     ++thread_id;
@@ -71,9 +75,11 @@ void threads_initialize(thread_entry_t idle_entry)
     // its stack.
     // This thread is fully initialized already.
     dl_create_unlinked(&thread_run_queue);
+
+    kernel_thread_is_active = true;
 }
 
-uint8_t thread_create_unlinked(thread_entry_t entry_point, void *argument, bool preemptable, uint8_t status)
+uint8_t thread_create_unlinked(thread_entry_t entry_point, void *argument, bool preemptable)
 {
     INTERRUPT_RAISE_LEVEL();
 
@@ -130,14 +136,14 @@ uint8_t thread_create_unlinked(thread_entry_t entry_point, void *argument, bool 
         thread->ticks = 0xFF;
     }
 
-    thread->status = status;
+    thread->status = THREAD_STATUS_RUNNABLE;
 
     return thread_id;
 }
 
 uint8_t thread_create(thread_entry_t entry_point, void *argument, bool preemptable)
 {
-    uint8_t thread_id = thread_create_unlinked(entry_point, argument, preemptable, THREAD_STATUS_RUNNABLE);
+    uint8_t thread_id = thread_create_unlinked(entry_point, argument, preemptable);
 
     if (thread_id == OBJECT_ID_INVALID)
     {
@@ -161,9 +167,11 @@ void thread_block(uint8_t thread_id)
 
     threads[thread_id].status = THREAD_STATUS_BLOCKED;
 
-    dl_unlink(&thread_run_queue, thread_id);
-
-    --runnable_thread_count;
+    if (thread_id != THREAD_ID_KERNEL)
+    {
+        dl_unlink(&thread_run_queue, thread_id);
+        --runnable_thread_count;
+    }
 
     INTERRUPT_LOWER_LEVEL();
 }
@@ -175,9 +183,11 @@ void thread_ensure_runnable(uint8_t thread_id)
     {
         threads[thread_id].status = THREAD_STATUS_RUNNABLE;
 
-        dl_append(&thread_run_queue, thread_id);
-
-        ++runnable_thread_count;
+        if (thread_id != THREAD_ID_KERNEL)
+        {
+            dl_append(&thread_run_queue, thread_id);
+            ++runnable_thread_count;
+        }
     }
 }
 
@@ -199,14 +209,29 @@ void thread_delete(uint8_t thread_id)
 
 uint8_t thread_get_first_runnable()
 {
-    object_id_t thread_id = dl_get_first(&thread_run_queue);
+    object_id_t thread_id = THREAD_ID_IDLE;
 
-    return thread_id != OBJECT_ID_INVALID ? thread_id : THREAD_ID_IDLE;
+    if (kernel_thread_is_active && threads[THREAD_ID_KERNEL].status == THREAD_STATUS_RUNNABLE)
+    {
+        return THREAD_ID_KERNEL;
+    }
+
+    if (current_thread_id != THREAD_ID_KERNEL)
+    {
+        thread_id = dl_get_first(&thread_run_queue);
+
+        return thread_id != OBJECT_ID_INVALID ? thread_id : THREAD_ID_IDLE;
+    }
+    else
+    {
+        return thread_id;
+    }
 }
 
-thread_t *thread_get(uint8_t thread_id)
+void thread_set_current(uint8_t thread_id)
 {
-    return &threads[thread_id];
+    current_thread_id = thread_id;
+    current_thread = &threads[thread_id];
 }
 
 __attribute__((naked))
@@ -219,8 +244,7 @@ static void global_thread_entry()
     thread_block(current_thread_id);
     thread_delete(current_thread_id);
 
-    current_thread_id = thread_get_first_runnable();
-    current_thread = thread_get(current_thread_id);
+    thread_set_current(thread_get_first_runnable());
 
     if (current_thread->ticks != 0xFF)
     {
@@ -241,8 +265,7 @@ void thread_yield_dispatch()
     SAVE_SECOND_HALF_CONTEXT();
     SAVE_STACK_POINTER();
 
-    current_thread_id = thread_get_first_runnable();
-    current_thread = thread_get(current_thread_id);
+    thread_set_current(thread_get_first_runnable());
 
     if (current_thread->ticks != 0xFF)
     {
@@ -263,8 +286,10 @@ void thread_dispatch_to_kernel()
     SAVE_SECOND_HALF_CONTEXT();
     SAVE_STACK_POINTER();
 
-    current_thread_id = THREAD_ID_KERNEL;
-    current_thread = thread_get(current_thread_id);
+    thread_ensure_runnable(THREAD_ID_KERNEL);
+    thread_set_current(THREAD_ID_KERNEL);
+
+    kernel_thread_is_active = true;
 
     RESTORE_STACK_POINTER();
     RESTORE_SECOND_HALF_CONTEXT();
@@ -275,24 +300,33 @@ void thread_dispatch_to_kernel()
 
 static bool need_to_switch_threads()
 {
-    if (runnable_thread_count)
+    if (current_thread_id == THREAD_ID_KERNEL)
     {
-        if (current_thread_id == THREAD_ID_IDLE)
+        return false;
+    }
+    else if (current_thread_id == THREAD_ID_IDLE)
+    {
+        if (kernel_thread_is_active)
         {
-            return true;
+            return threads[THREAD_ID_KERNEL].status == THREAD_STATUS_RUNNABLE;
         }
-        else if (current_thread->ticks != 0xFF)
+        else
         {
-            if (current_thread->ticks)
-            {
-                --current_thread->ticks;
-            }
+            return runnable_thread_count;
+        }
+    }
+    else if (runnable_thread_count < 2)
+    {
+        return false;
+    }
+    else if (current_thread->ticks != 0xFF)
+    {
+        if (current_thread->ticks)
+        {
+            --current_thread->ticks;
+        }
 
-            if (!current_thread->ticks && runnable_thread_count > 1)
-            {
-                return true;
-            }
-        }
+        return !current_thread->ticks && runnable_thread_count > 1;
     }
 
     return false;
@@ -307,8 +341,7 @@ ISR(TIMER0_COMPA_vect)
 
     if (!need_to_switch_threads())
     {
-        RESTORE_FIRST_HALF_CONTEXT();
-        DISPATCH();
+        goto return_no_context_switch;
     }
 
     SAVE_SECOND_HALF_CONTEXT();
@@ -319,8 +352,7 @@ ISR(TIMER0_COMPA_vect)
         thread_move_first_to_end();
     }
 
-    current_thread_id = thread_get_first_runnable();
-    current_thread = thread_get(current_thread_id);
+    thread_set_current(thread_get_first_runnable());
 
     if (current_thread->ticks != 0xFF)
     {
@@ -329,6 +361,10 @@ ISR(TIMER0_COMPA_vect)
 
     RESTORE_STACK_POINTER();
     RESTORE_SECOND_HALF_CONTEXT();
+    RESTORE_FIRST_HALF_CONTEXT();
+    DISPATCH();
+
+return_no_context_switch:
     RESTORE_FIRST_HALF_CONTEXT();
     DISPATCH();
 }
