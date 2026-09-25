@@ -207,6 +207,20 @@ void thread_delete(uint8_t thread_id)
     INTERRUPT_LOWER_LEVEL();
 }
 
+void thread_sleep(uint16_t milliseconds)
+{
+	if (!milliseconds)
+	{
+		return;
+	}
+
+	INTERRUPT_RAISE_LEVEL();
+
+	timer_add(current_thread_id, milliseconds);
+	thread_block(current_thread_id);
+	thread_yield_dispatch();
+}
+
 uint8_t thread_get_first_runnable()
 {
     object_id_t thread_id = THREAD_ID_IDLE;

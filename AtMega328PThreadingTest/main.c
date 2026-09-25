@@ -64,20 +64,6 @@ void kernel_init_task(void *unused_arguments)
     TCCR0B = (1 << CS01) | (1 << CS00);
 }
 
-void sleep(uint16_t milliseconds)
-{
-    if (!milliseconds)
-    {
-        return;
-    }
-    
-    INTERRUPT_RAISE_LEVEL();
-
-    timer_add(current_thread_id, milliseconds);
-    thread_block(current_thread_id);
-    thread_yield_dispatch();
-}
-
 void post_kernel_task(task_handler_t handler, void *arguments)
 {
     INTERRUPT_RAISE_LEVEL();
@@ -98,7 +84,7 @@ void thread_root_entry(void *unused_arguments)
 
     for (;;)
     {
-        sleep(123);
+        thread_sleep(123);
 
         PINB = (1 << PB5);
     }
@@ -108,7 +94,7 @@ void thread_3_entry(void *unused_arguments)
 {
     for (int i = 0; i < 10; ++i)
     {
-        sleep(150);
+        thread_sleep(150);
 
         PINB = (1 << PB5);
     }
@@ -125,14 +111,14 @@ void test_kernel_task(void *unused_arguments)
 
     for (uint32_t i = 0; i < 5; ++i)
     {
-        sleep(250);
+        thread_sleep(250);
 
         PINB = (1 << PB5);
 
         write_count += printf_P(string_iterations, "Kernel Thread", i, read_count, write_count, idle_spin_count);
     }
 
-    sleep(250);
+    thread_sleep(250);
 
     printf_P(PSTR("Kernel Thread exiting...\n"));
 }
@@ -146,12 +132,12 @@ void thread_4_entry(void *unused_arguments)
     for (int i = 0; i < 60; ++i)
     {
         printf(".");
-        sleep(5);
+        thread_sleep(5);
     }        
 
     printf_P(PSTR(" Let's go!\n"));
 
-    sleep(1000);
+    thread_sleep(1000);
 
     uint32_t read_count = 0;
     uint32_t write_count = 0;
@@ -162,11 +148,11 @@ void thread_4_entry(void *unused_arguments)
     {
         if ((i % 9) == 0)
         {
-            sleep(1000);
+            thread_sleep(1000);
 
             printf_P(PSTR("Allocate, copy, print, and free %u bytes...\n"), sizeof(string_wheee));
 
-            char *dynamic = malloc(sizeof(string_wheee));
+            uint8_t *dynamic = malloc(sizeof(string_wheee));
 
             if (!dynamic)
             {
@@ -175,11 +161,11 @@ void thread_4_entry(void *unused_arguments)
 
             memcpy_P(dynamic, string_wheee, sizeof(string_wheee));
 
-            io_write((const uint8_t*) dynamic, (uint8_t) sizeof(string_wheee), 0);
+            io_write(dynamic, (uint8_t) sizeof(string_wheee), 0);
 
             free(dynamic);
 
-            sleep(1000);
+            thread_sleep(1000);
 
             printf_P(PSTR("Kernel task...\n"));
 
@@ -209,14 +195,14 @@ void thread_4_entry(void *unused_arguments)
                 }
             }                
 
-            sleep(1000);
+            thread_sleep(1000);
         }
 
         length = printf_P(string_iterations, "Thread 4", i, read_count, write_count, idle_spin_count);
 
         write_count += length;
 
-        sleep(250);
+        thread_sleep(250);
     }
 }
 

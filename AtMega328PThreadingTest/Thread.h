@@ -33,6 +33,7 @@ void thread_block(uint8_t thread_id);
 void thread_ensure_runnable(uint8_t thread_id);
 void thread_move_first_to_end();
 void thread_delete(uint8_t thread_id);
+void thread_sleep(uint16_t milliseconds);
 uint8_t thread_get_first_runnable();
 //thread_t *thread_get(uint8_t thread_id);
 void thread_set_current(uint8_t thread_id);

@@ -21,9 +21,13 @@
 #define BAUD 62500
 #define BAUDRATE ((F_CPU) / (BAUD * 16UL) -1)
 
+#define IO_INNACTIVE 0
+#define IO_READ 1
+#define IO_WRITE 2
+
 typedef struct
 {
-    bool active;
+    uint8_t status;
     uint8_t *buffer;
     uint8_t buffer_length;
     uint8_t offset;
@@ -31,8 +35,7 @@ typedef struct
     uint8_t thread_id;
 } io_task_t;
 
-static io_task_t read_task;
-static io_task_t write_task;
+static io_task_t io_task;
 
 static int uart_getchar(FILE *stream);
 static int uart_putchar(char c, FILE *stream);
@@ -44,11 +47,7 @@ static uint16_t getchar_timeout;
 
 void io_task_init()
 {
-    read_task.active = false;
-    read_task.thread_id = 0xFF;
-
-    write_task.active = false;
-    write_task.thread_id = 0xFF;
+    io_task.status = IO_INNACTIVE;
 
     UBRR0H = (uint8_t) (BAUDRATE >> 8);
     UBRR0L = (uint8_t) BAUDRATE;
@@ -72,27 +71,25 @@ void io_crash_init(int(*put)(char, struct __file *))
     fdev_setup_stream(&uart_stdout_err, put, NULL, _FDEV_SETUP_WRITE);
 }
 
-static int io_dispatch(io_task_t *io_task, uint16_t timeout)
+static int io_dispatch(uint16_t timeout)
 {
-    io_task->active = true;
-    io_task->thread_id = current_thread_id;
+    io_task.thread_id = current_thread_id;
 
     if (timeout > 0)
     {
-        io_task->timer_id = timer_add(current_thread_id, timeout);
+        io_task.timer_id = timer_add(current_thread_id, timeout);
     }
     else
     {
-        io_task->timer_id = OBJECT_ID_INVALID;
+        io_task.timer_id = OBJECT_ID_INVALID;
     }
 
     thread_block(current_thread_id);
     thread_yield_dispatch();
 
-    int return_value = io_task->offset < io_task->buffer_length ? -1 : io_task->buffer_length;
+    int return_value = io_task.offset < io_task.buffer_length ? -1 : io_task.buffer_length;
 
-    io_task->active = false;
-    io_task->thread_id = OBJECT_ID_INVALID;
+    io_task.status = IO_INNACTIVE;
 
     return return_value;
 }
@@ -101,18 +98,18 @@ int io_read(uint8_t *buffer, uint8_t buffer_length, uint16_t timeout)
 {
     INTERRUPT_RAISE_LEVEL();
 
-    if (read_task.active || write_task.active)
+    if (io_task.status)
     {
         exit(ERR_IO_READ_DUP);
     }
 
-    read_task.offset = 0;
+    io_task.offset = 0;
 
     if (UCSR0A & (1 << RXC0))
     {
-        buffer[read_task.offset++] = UDR0;
+        buffer[io_task.offset++] = UDR0;
         
-        if (read_task.offset == buffer_length)
+        if (io_task.offset == buffer_length)
         {
             INTERRUPT_LOWER_LEVEL();
             
@@ -120,28 +117,29 @@ int io_read(uint8_t *buffer, uint8_t buffer_length, uint16_t timeout)
         }
     }
 
-    read_task.buffer = buffer;
-    read_task.buffer_length = buffer_length;
+    io_task.status = IO_READ;
+    io_task.buffer = buffer;
+    io_task.buffer_length = buffer_length;
 
-    return io_dispatch(&read_task, timeout);
+    return io_dispatch(timeout);
 }
 
-int io_write(const uint8_t *buffer, uint8_t buffer_length, uint16_t timeout)
+int io_write(uint8_t *buffer, uint8_t buffer_length, uint16_t timeout)
 {
-    INTERRUPT_RAISE_LEVEL();
+   INTERRUPT_RAISE_LEVEL();
 
-    if (read_task.active || write_task.active)
+    if (io_task.status)
     {
         exit(ERR_IO_WRITE_DUP);
     }
 
-    write_task.offset = 0;
+    io_task.offset = 0;
 
     if (UCSR0A & (1 << UDRE0))
     {
-        UDR0 = buffer[write_task.offset++];
+        UDR0 = buffer[io_task.offset++];
         
-        if (write_task.offset == buffer_length)
+        if (io_task.offset == buffer_length)
         {
             INTERRUPT_LOWER_LEVEL();
             
@@ -149,10 +147,11 @@ int io_write(const uint8_t *buffer, uint8_t buffer_length, uint16_t timeout)
         }
     }
 
-    write_task.buffer = (uint8_t*) buffer;
-    write_task.buffer_length = buffer_length;
+    io_task.status = IO_WRITE;
+    io_task.buffer = buffer;
+    io_task.buffer_length = buffer_length;
 
-    return io_dispatch(&write_task, timeout);
+    return io_dispatch(timeout);
 }
 
 static int uart_getchar(FILE *stream)
@@ -202,60 +201,24 @@ void set_getchar_timeout(uint16_t timeout)
     getchar_timeout = timeout;
 }
 
-ISR(USART_RX_vect)
-{
-    // Always clear the USART buffer regardless of where the byte might end up.
-    uint8_t b = UDR0;
-    
-    if (!read_task.active)
-    {
-        return;
-    }
-
-    read_task.buffer[read_task.offset++] = b;
-
-    if (read_task.offset != read_task.buffer_length)
-    {
-        return;
-    }
-
-    read_task.active = false;
-
-    if (read_task.timer_id != OBJECT_ID_INVALID)
-    {
-        timer_cancel(read_task.timer_id);
-    }
-
-    thread_ensure_runnable(read_task.thread_id);
-}
-
 __attribute__((naked))
-ISR(USART_TX_vect)
+void io_interrupt_common()
 {
-    SAVE_FIRST_HALF_CONTEXT();
-
-    if (!write_task.active)
+    if (io_task.offset != io_task.buffer_length)
     {
         goto return_no_context_switch;
     }
 
-    UDR0 = write_task.buffer[write_task.offset++];
-        
-    if (write_task.offset != write_task.buffer_length)
+    if (io_task.timer_id != OBJECT_ID_INVALID)
     {
-        goto return_no_context_switch;
+        timer_cancel(io_task.timer_id);
     }
 
-    write_task.active = false;
+    thread_ensure_runnable(io_task.thread_id);
 
-    if (write_task.timer_id != OBJECT_ID_INVALID)
-    {
-        timer_cancel(write_task.timer_id);
-    }
+    io_task.status = IO_INNACTIVE;
 
-    thread_ensure_runnable(write_task.thread_id);
-
-    if (current_thread_id != THREAD_ID_IDLE)
+    if (io_task.thread_id != THREAD_ID_IDLE)
     {
         goto return_no_context_switch;
     }
@@ -263,7 +226,7 @@ ISR(USART_TX_vect)
     SAVE_SECOND_HALF_CONTEXT();
     SAVE_STACK_POINTER();
 
-    thread_set_current(write_task.thread_id);
+    thread_set_current(io_task.thread_id);
 
     RESTORE_STACK_POINTER();
     RESTORE_SECOND_HALF_CONTEXT();
@@ -273,4 +236,44 @@ ISR(USART_TX_vect)
 return_no_context_switch:
     RESTORE_FIRST_HALF_CONTEXT();
     DISPATCH();
+}
+
+__attribute__((naked))
+ISR(USART_RX_vect)
+{
+    SAVE_FIRST_HALF_CONTEXT();
+
+    uint8_t b = UDR0;
+
+    if (io_task.status != IO_READ)
+    {
+        RESTORE_FIRST_HALF_CONTEXT();
+        DISPATCH();
+    }
+
+    io_task.buffer[io_task.offset++] = b;
+
+    asm volatile(
+        "jmp io_interrupt_common \n\t" \
+        ::
+    );
+}
+
+__attribute__((naked))
+ISR(USART_TX_vect)
+{
+    SAVE_FIRST_HALF_CONTEXT();
+
+    if (io_task.status != IO_WRITE)
+    {
+        RESTORE_FIRST_HALF_CONTEXT();
+        DISPATCH();
+    }
+
+    UDR0 = io_task.buffer[io_task.offset++];
+
+    asm volatile(
+        "jmp io_interrupt_common \n\t" \
+        ::
+    );
 }
