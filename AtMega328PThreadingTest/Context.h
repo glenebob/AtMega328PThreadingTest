@@ -22,8 +22,7 @@
         "push r29                 \n\t" \
         "push r30                 \n\t" \
         "push r31                 \n\t" \
-        :: \
-    ); \
+    )
 
 #define SAVE_SECOND_HALF_CONTEXT() \
     asm volatile ( \
@@ -43,8 +42,7 @@
         "push r15                 \n\t" \
         "push r16                 \n\t" \
         "push r17                 \n\t" \
-        :: \
-    ); \
+    )
 
 #define SAVE_STACK_POINTER() \
     asm volatile ( \
@@ -103,7 +101,4 @@
         "pop  r0                  \n\t" \
         "out  __SREG__, r0        \n\t" \
         "pop  r0                  \n\t" \
-        :: \
     )
-
- #define DISPATCH() reti()

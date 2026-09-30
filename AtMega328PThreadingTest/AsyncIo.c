@@ -13,7 +13,7 @@
 #include "Interrupt.h"
 #include "Timer.h"
 #include "Thread.h"
-#include "Assembly.h"
+#include "Context.h"
 
 #include "AsyncIo.h"
 
@@ -231,11 +231,13 @@ void io_interrupt_common()
     RESTORE_STACK_POINTER();
     RESTORE_SECOND_HALF_CONTEXT();
     RESTORE_FIRST_HALF_CONTEXT();
-    DISPATCH();
+
+    reti();
 
 return_no_context_switch:
     RESTORE_FIRST_HALF_CONTEXT();
-    DISPATCH();
+
+    reti();
 }
 
 __attribute__((naked))
@@ -248,7 +250,8 @@ ISR(USART_RX_vect)
     if (io_task.status != IO_READ)
     {
         RESTORE_FIRST_HALF_CONTEXT();
-        DISPATCH();
+
+        reti();
     }
 
     io_task.buffer[io_task.offset++] = b;
@@ -267,7 +270,8 @@ ISR(USART_TX_vect)
     if (io_task.status != IO_WRITE)
     {
         RESTORE_FIRST_HALF_CONTEXT();
-        DISPATCH();
+
+        reti();
     }
 
     UDR0 = io_task.buffer[io_task.offset++];

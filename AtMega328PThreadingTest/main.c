@@ -34,15 +34,21 @@ const __flash char string_wheee[] PROGMEM =
 
 void thread_root_entry(void*);
 
+volatile bool trueFlag = 1;
+
 void thread_idle_entry(void *unused_arguments)
 {
-    for (;;)
+    char status[] = "Idle!";
+
+    while (trueFlag)
     {
-        INTERRUPT_RAISE_LEVEL();
+        cli();
         ++idle_spin_count;
-        INTERRUPT_LOWER_LEVEL();
+        sei();
         sleep_cpu();
     }
+
+    memset(status, 0, sizeof(status));
 }
 
 void kernel_init_task(void *unused_arguments)
@@ -77,21 +83,27 @@ void thread_4_entry(void*);
 
 void thread_root_entry(void *unused_arguments)
 {
+    char status[] = "Root!";
+
     DDRB |= (1 << PB5); 
 
     thread_create(thread_3_entry, NULL, true);
     thread_create(thread_4_entry, NULL, true);
 
-    for (;;)
+    while (trueFlag)
     {
         thread_sleep(123);
 
         PINB = (1 << PB5);
     }
+
+    memset(status, 0, sizeof(status));
 }
 
 void thread_3_entry(void *unused_arguments)
 {
+    char status[] = "Thread 3!";
+
     for (int i = 0; i < 10; ++i)
     {
         thread_sleep(150);
@@ -100,6 +112,8 @@ void thread_3_entry(void *unused_arguments)
     }
 
     thread_create(thread_3_entry, NULL, true);
+
+    memset(status, 0, sizeof(status));
 }
 
 void test_kernel_task(void *unused_arguments)
@@ -125,6 +139,8 @@ void test_kernel_task(void *unused_arguments)
 
 void thread_4_entry(void *unused_arguments)
 {
+    char status[] = "Thread 4!";
+
     set_getchar_timeout(5000);
 
     printf("\n");
@@ -144,7 +160,7 @@ void thread_4_entry(void *unused_arguments)
     char line_buffer[16];
     int length;
 
-    for (uint32_t i = 0; ; ++i)
+    for (uint32_t i = 0; trueFlag; ++i)
     {
         if ((i % 9) == 0)
         {
@@ -163,6 +179,7 @@ void thread_4_entry(void *unused_arguments)
 
             io_write(dynamic, (uint8_t) sizeof(string_wheee), 0);
 
+            memset(dynamic, 0, sizeof(string_wheee));
             free(dynamic);
 
             thread_sleep(1000);
@@ -204,11 +221,13 @@ void thread_4_entry(void *unused_arguments)
 
         thread_sleep(250);
     }
+
+    memset(status, 0, sizeof(status));
 }
 
 int main()
 {
-    INTERRUPT_INITIALIZE();
+    interrupt_initialize();
 
     task_queue_init();
     threads_initialize(thread_idle_entry);
@@ -228,7 +247,11 @@ int main()
 
         while (task_queue_pop(&handler, &arguments))
         {
+            char status[] = "Kernel!";
+
             handler(arguments);
+
+            memset(status, 0, sizeof(status));
         }
 
         INTERRUPT_RAISE_LEVEL();

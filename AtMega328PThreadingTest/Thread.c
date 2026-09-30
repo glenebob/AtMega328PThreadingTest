@@ -5,7 +5,7 @@
 #include "Interrupt.h"
 #include "LinkedList.h"
 #include "Timer.h"
-#include "Assembly.h"
+#include "Context.h"
 
 #include "Thread.h"
 
@@ -269,7 +269,8 @@ static void global_thread_entry()
     RESTORE_SECOND_HALF_CONTEXT();
     RESTORE_FIRST_HALF_CONTEXT();
     INTERRUPT_LOWER_LEVEL_NO_ENABLE();
-    DISPATCH();
+
+    reti();
 }
 
 __attribute__((naked))
@@ -290,7 +291,8 @@ void thread_yield_dispatch()
     RESTORE_SECOND_HALF_CONTEXT();
     RESTORE_FIRST_HALF_CONTEXT();
     INTERRUPT_LOWER_LEVEL_NO_ENABLE();
-    DISPATCH();
+
+    reti();
 }
 
 __attribute__((naked))
@@ -309,7 +311,8 @@ void thread_dispatch_to_kernel()
     RESTORE_SECOND_HALF_CONTEXT();
     RESTORE_FIRST_HALF_CONTEXT();
     INTERRUPT_LOWER_LEVEL_NO_ENABLE();
-    DISPATCH();
+
+    reti();
 }
 
 static bool need_to_switch_threads()
@@ -376,9 +379,11 @@ ISR(TIMER0_COMPA_vect)
     RESTORE_STACK_POINTER();
     RESTORE_SECOND_HALF_CONTEXT();
     RESTORE_FIRST_HALF_CONTEXT();
-    DISPATCH();
+
+    reti();
 
 return_no_context_switch:
     RESTORE_FIRST_HALF_CONTEXT();
-    DISPATCH();
+
+    reti();
 }
