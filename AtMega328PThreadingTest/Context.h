@@ -24,6 +24,11 @@
         "push r31                 \n\t" \
     )
 
+#define CLEAR_R1() \
+    asm volatile ( \
+        "clr r1                   \n\t" \
+    )
+
 #define SAVE_SECOND_HALF_CONTEXT() \
     asm volatile ( \
         "push r2                  \n\t" \
@@ -101,4 +106,10 @@
         "pop  r0                  \n\t" \
         "out  __SREG__, r0        \n\t" \
         "pop  r0                  \n\t" \
+    )
+
+#define JUMP(function) \
+    asm volatile ( \
+        "jmp %x0 \n\t" \
+        :: "i"(function) \
     )

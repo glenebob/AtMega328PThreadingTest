@@ -18,8 +18,10 @@ void interrupt_initialize();
         "push r0                    \n\t" \
         "in r0, __SREG__            \n\t" \
         "push r0                    \n\t" \
+        "push r1                    \n\t" \
         "push r24                   \n\t" \
         "push r25                   \n\t" \
+        "clr r1                     \n\t" \
         "lds r24, interrupt_level   \n\t" \
         "cpse r24, r1               \n\t" \
         "rjmp 1f                    \n\t" \
@@ -31,6 +33,7 @@ void interrupt_initialize();
         "sts interrupt_level, r24   \n\t" \
         "pop r25                    \n\t" \
         "pop r24                    \n\t" \
+        "pop r1                     \n\t" \
         "pop r0                     \n\t" \
         "out __SREG__, r0           \n\t" \
         "pop r0                     \n\t" \

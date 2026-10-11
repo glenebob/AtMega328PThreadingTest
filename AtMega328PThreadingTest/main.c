@@ -18,9 +18,9 @@
 #include "Thread.h"
 #include "AsyncIo.h"
 
-const __flash char string_iterations[] PROGMEM = "%s: Iterations: %lu, Read: %lu, Write: %lu, Idle Spins: %lu\n";
+static const __flash char string_iterations[] PROGMEM = "%s: Iterations: %lu, Read: %lu, Write: %lu, Idle Spins: %lu\n";
 
-const __flash char string_wheee[] PROGMEM =
+static const __flash char string_wheee[] PROGMEM =
     "Begin big single write\r\n"
     "Wheeeeeeeeeeeeeeeeeeeeeee"
     "eeeeeeeeeeeeeeeeeeeeeeeee\r\n"
@@ -34,23 +34,6 @@ const __flash char string_wheee[] PROGMEM =
 
 void thread_root_entry(void*);
 
-volatile bool trueFlag = 1;
-
-void thread_idle_entry(void *unused_arguments)
-{
-    char status[] = "Idle!";
-
-    while (trueFlag)
-    {
-        cli();
-        ++idle_spin_count;
-        sei();
-        sleep_cpu();
-    }
-
-    memset(status, 0, sizeof(status));
-}
-
 void kernel_init_task(void *unused_arguments)
 {
     set_sleep_mode(SLEEP_MODE_IDLE);
@@ -58,9 +41,6 @@ void kernel_init_task(void *unused_arguments)
 
     timers_initialize();
     io_task_init();
-
-    // Create the idle thread (ID: 1).
-    thread_create_unlinked(thread_idle_entry, NULL, false);
 
     thread_create(thread_root_entry, NULL, true);
 
@@ -75,15 +55,25 @@ void post_kernel_task(task_handler_t handler, void *arguments)
     INTERRUPT_RAISE_LEVEL();
 
     task_queue_push(handler, arguments);
-    thread_dispatch_to_kernel();
+    thread_queue(THREAD_ID_KERNEL);
+    thread_yield_dispatch();
 }
 
 void thread_3_entry(void*);
 void thread_4_entry(void*);
+void thread_5_entry(void*);
 
 void thread_root_entry(void *unused_arguments)
 {
-    char status[] = "Root!";
+    static const __flash char string_root[] PROGMEM = "Root!";
+
+    static volatile bool trueFlag = true;
+
+    char status[sizeof(string_root) - 1];
+
+    memcpy_P(status, string_root, sizeof(status));
+
+    memcpy_P(__malloc_heap_end - 12, PSTR("<malloc end>"), 12);
 
     DDRB |= (1 << PB5); 
 
@@ -102,18 +92,26 @@ void thread_root_entry(void *unused_arguments)
 
 void thread_3_entry(void *unused_arguments)
 {
-    char status[] = "Thread 3!";
+    static const __flash char string_thread_3[] PROGMEM = "Thread 3!";
 
-    for (int i = 0; i < 10; ++i)
+    static volatile bool trueFlag = true;
+
+    const size_t sizeof_status = sizeof(string_thread_3) - 1;
+
+    char status[sizeof_status];
+
+    memcpy_P(status, string_thread_3, sizeof_status);
+
+    thread_create(thread_5_entry, NULL, true);
+
+    while (trueFlag)
     {
         thread_sleep(150);
 
         PINB = (1 << PB5);
     }
 
-    thread_create(thread_3_entry, NULL, true);
-
-    memset(status, 0, sizeof(status));
+    memset(status, 0, sizeof_status);
 }
 
 void test_kernel_task(void *unused_arguments)
@@ -139,7 +137,13 @@ void test_kernel_task(void *unused_arguments)
 
 void thread_4_entry(void *unused_arguments)
 {
-    char status[] = "Thread 4!";
+    static const __flash char string_thread_4[] PROGMEM = "Thread 4!";
+
+    static volatile bool trueFlag = true;
+
+    char status[sizeof(string_thread_4) - 1];
+
+    memcpy_P(status, string_thread_4, sizeof(status));
 
     set_getchar_timeout(5000);
 
@@ -179,7 +183,7 @@ void thread_4_entry(void *unused_arguments)
 
             io_write(dynamic, (uint8_t) sizeof(string_wheee), 0);
 
-            memset(dynamic, 0, sizeof(string_wheee));
+            memset(dynamic, '/', sizeof(string_wheee));
             free(dynamic);
 
             thread_sleep(1000);
@@ -225,29 +229,67 @@ void thread_4_entry(void *unused_arguments)
     memset(status, 0, sizeof(status));
 }
 
+void thread_5_entry(void *unused_arguments)
+{
+    static const __flash char string_thread_5[] PROGMEM = "Thread 5!";
+
+    static volatile bool trueFlag = true;
+
+    char status[sizeof(string_thread_5) - 1];
+
+    memcpy_P(status, string_thread_5, sizeof(status));
+
+    int multiply1;
+    int multiply2;
+    int multiply3;
+
+    while (trueFlag)
+    {
+        do
+        {
+            multiply1 = rand();
+            multiply2 = rand();
+            multiply3 = multiply1 * multiply2;
+
+            thread_sleep(5);
+        }
+        while (multiply3);
+    }
+
+    memset(status, 0, sizeof(status));
+}
+
 int main()
 {
+    static const __flash char string_kernel[] PROGMEM = "Kernel!";
+
+    static volatile bool trueFlag = true;
+
+    char status[sizeof(string_kernel) - 1];
+
+    memcpy_P(status, string_kernel, sizeof(status));
+
     interrupt_initialize();
-
-    task_queue_init();
-    threads_initialize(thread_idle_entry);
-
-    // Become the kernel thread.
-    thread_set_current(THREAD_ID_KERNEL);
+    task_queue_initialize();
+    threads_initialize();
 
     // Queue up remaining initialization.
     task_queue_push(kernel_init_task, NULL);
 
     INTERRUPT_LOWER_LEVEL();
 
-    for (;;)
+    while (trueFlag)
     {
         task_handler_t handler;
         void *arguments;
 
         while (task_queue_pop(&handler, &arguments))
         {
-            char status[] = "Kernel!";
+            static const __flash char string_kernel_task[] PROGMEM = "Kernel Task!";
+
+            char status[sizeof(string_kernel_task) - 1];
+
+            memcpy_P(status, string_kernel_task, sizeof(status));
 
             handler(arguments);
 
@@ -256,8 +298,9 @@ int main()
 
         INTERRUPT_RAISE_LEVEL();
 
-        kernel_thread_is_active = false;
-        thread_block(THREAD_ID_KERNEL);
+        thread_kernel_dormant();
         thread_yield_dispatch();
     }
+
+    memset(status, 0, sizeof(status));
 }

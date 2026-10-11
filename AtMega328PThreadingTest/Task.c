@@ -1,89 +1,89 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-#include <avr/interrupt.h>
-#include <avr/sleep.h>
-
 #include "Types.h"
 #include "Error.h"
 #include "Interrupt.h"
+#include "Stack.h"
+#include "RingBuffer.h"
+
 #include "Task.h"
 
 #define TASK_COUNT 5
 
-struct
+typedef struct
 {
-    uint8_t last;
-    uint8_t next_in;
-    uint8_t next_out;
-    struct
-    {
-        task_handler_t handler;
-        void *arguments;
-    } tasks[TASK_COUNT];
-} task_queue;
+    task_handler_t handler;
+    void *arguments;
+} task_t;
 
-void task_queue_init()
+typedef struct
 {
-    task_queue.last = TASK_COUNT - 1;
-    task_queue.next_in = 0;
-    task_queue.next_out = 0xFF;
+    stack_header_t header;
+    object_id_t tasks[TASK_COUNT];
+} task_free_list_t;
+
+typedef struct
+{
+    ring_buffer_header_t header;
+    object_id_t tasks[TASK_COUNT];
+} task_queue_t;
+
+static task_t tasks[TASK_COUNT];
+static task_free_list_t task_free_list;
+static task_queue_t task_queue;
+
+void task_queue_initialize()
+{
+    stack_initialize(&task_free_list.header, TASK_COUNT);
+    ring_buffer_initialize(&task_queue.header, TASK_COUNT);
+
+    for (object_id_t task_id = TASK_COUNT - 1; task_id != OBJECT_ID_INVALID;--task_id)
+    {
+        stack_push(&task_free_list, &task_id, sizeof(object_id_t));
+    }
 }
 
-void task_queue_push(task_handler_t handler, void *arguments)
+bool task_queue_push(task_handler_t handler, void *arguments)
 {
     INTERRUPT_RAISE_LEVEL();
 
-    if (task_queue.next_in == task_queue.next_out)
-    {
-        exit(ERR_TASK_QUEUE_FULL);
-    }
+    object_id_t task_id;
 
-    task_queue.tasks[task_queue.next_in].handler = handler;
-    task_queue.tasks[task_queue.next_in].arguments = arguments;
-
-    if (task_queue.next_out == OBJECT_ID_INVALID)
-    {
-        task_queue.next_out = task_queue.next_in;
-    }
-
-    if (task_queue.next_in == task_queue.last)
-    {
-        task_queue.next_in = 0;
-    }
-    else
-    {
-        ++task_queue.next_in;
-    }
-
-    INTERRUPT_LOWER_LEVEL();
-}
-
-bool task_queue_pop(task_handler_t *handler, void **arguments)
-{
-    INTERRUPT_RAISE_LEVEL();
-
-    if (task_queue.next_out == OBJECT_ID_INVALID)
+    if (!stack_pop(&task_free_list, &task_id, sizeof(object_id_t)))
     {
         INTERRUPT_LOWER_LEVEL();
 
         return false;
     }
 
-    *handler = task_queue.tasks[task_queue.next_out].handler;
-    *arguments = task_queue.tasks[task_queue.next_out].arguments;
+    tasks[task_id].handler = handler;
+    tasks[task_id].arguments = arguments;
 
-    ++task_queue.next_out;
+    ring_buffer_push(&task_queue, &task_id, sizeof(object_id_t));
 
-    if (task_queue.next_out > task_queue.last)
+    INTERRUPT_LOWER_LEVEL();
+
+    return true;
+}
+
+bool task_queue_pop(task_handler_t *handler, void **arguments)
+{
+    INTERRUPT_RAISE_LEVEL();
+
+    object_id_t task_id;
+
+    if (!ring_buffer_pop(&task_queue, &task_id, sizeof(object_id_t)))
     {
-        task_queue.next_out = 0;
+        INTERRUPT_LOWER_LEVEL();
+
+        return false;
     }
 
-    if (task_queue.next_out == task_queue.next_in)
-    {
-        task_queue.next_out = OBJECT_ID_INVALID;
-    }
+    *handler = tasks[task_id].handler;
+    *arguments = tasks[task_id].arguments;
+
+    stack_push(&task_free_list, &task_id, sizeof(object_id_t));
 
     INTERRUPT_LOWER_LEVEL();
 

@@ -17,11 +17,11 @@
 
 #include "AsyncIo.h"
 
-//#define BAUD 9600
-#define BAUD 62500
+#define BAUD 9600
+//#define BAUD 62500
 #define BAUDRATE ((F_CPU) / (BAUD * 16UL) -1)
 
-#define IO_INNACTIVE 0
+#define IO_INACTIVE 0
 #define IO_READ 1
 #define IO_WRITE 2
 
@@ -47,15 +47,19 @@ static uint16_t getchar_timeout;
 
 void io_task_init()
 {
-    io_task.status = IO_INNACTIVE;
+    io_task.status = IO_INACTIVE;
 
+    // Set baud rate
     UBRR0H = (uint8_t) (BAUDRATE >> 8);
     UBRR0L = (uint8_t) BAUDRATE;
-    // Enable receiver and transmitter
-    UCSR0B = (1 << RXEN0) | (1 << TXEN0);
     // Set frame format: 8data, 2stop bit
     UCSR0C = (1 << UCSZ01) | (1 << UCSZ00);
-    UCSR0B = (1 << RXCIE0) | (1 << RXEN0) | (1 << TXCIE0) | (1 << TXEN0);
+    // Enable receiver and transmitter
+    UCSR0B |= (1 << RXEN0) | (1 << TXEN0);
+    // Enable interrupts (Fire TX interrupt after bits sent)
+    UCSR0B |= (1 << RXCIE0) | (1 << TXCIE0);
+    // Enable interrupts (Fire TX interrupt after buffer empty)
+//    UCSR0B |= (1 << RXEN0) | (1 << TXEN0) | (1 << RXCIE0) | (1 << TXCIE0);
     
     fdev_setup_stream(&uart_stdin, NULL, uart_getchar, _FDEV_SETUP_READ);
     fdev_setup_stream(&uart_stdout_err, uart_putchar, NULL, _FDEV_SETUP_WRITE);
@@ -68,6 +72,8 @@ void io_task_init()
 
 void io_crash_init(int(*put)(char, struct __file *))
 {
+    UCSR0B &= ~((1 << RXCIE0) | (1 << TXCIE0));
+
     fdev_setup_stream(&uart_stdout_err, put, NULL, _FDEV_SETUP_WRITE);
 }
 
@@ -89,7 +95,7 @@ static int io_dispatch(uint16_t timeout)
 
     int return_value = io_task.offset < io_task.buffer_length ? -1 : io_task.buffer_length;
 
-    io_task.status = IO_INNACTIVE;
+    io_task.status = IO_INACTIVE;
 
     return return_value;
 }
@@ -206,44 +212,30 @@ void io_interrupt_common()
 {
     if (io_task.offset != io_task.buffer_length)
     {
-        goto return_no_context_switch;
+        JUMP(thread_restore_first_half_dispatch_from_isr);
     }
+
+    SAVE_SECOND_HALF_CONTEXT();
+    SAVE_STACK_POINTER();
+
+    io_task.status = IO_INACTIVE;
 
     if (io_task.timer_id != OBJECT_ID_INVALID)
     {
         timer_cancel(io_task.timer_id);
     }
 
-    thread_ensure_runnable(io_task.thread_id);
+    thread_queue(io_task.thread_id);
+    thread_select_and_change();
 
-    io_task.status = IO_INNACTIVE;
-
-    if (io_task.thread_id != THREAD_ID_IDLE)
-    {
-        goto return_no_context_switch;
-    }
-
-    SAVE_SECOND_HALF_CONTEXT();
-    SAVE_STACK_POINTER();
-
-    thread_set_current(io_task.thread_id);
-
-    RESTORE_STACK_POINTER();
-    RESTORE_SECOND_HALF_CONTEXT();
-    RESTORE_FIRST_HALF_CONTEXT();
-
-    reti();
-
-return_no_context_switch:
-    RESTORE_FIRST_HALF_CONTEXT();
-
-    reti();
+    JUMP(thread_restore_all_dispatch_from_isr);
 }
 
 __attribute__((naked))
 ISR(USART_RX_vect)
 {
     SAVE_FIRST_HALF_CONTEXT();
+    CLEAR_R1();
 
     uint8_t b = UDR0;
 
@@ -256,16 +248,14 @@ ISR(USART_RX_vect)
 
     io_task.buffer[io_task.offset++] = b;
 
-    asm volatile(
-        "jmp io_interrupt_common \n\t" \
-        ::
-    );
+    JUMP(io_interrupt_common);
 }
 
 __attribute__((naked))
 ISR(USART_TX_vect)
 {
     SAVE_FIRST_HALF_CONTEXT();
+    CLEAR_R1();
 
     if (io_task.status != IO_WRITE)
     {
@@ -276,8 +266,5 @@ ISR(USART_TX_vect)
 
     UDR0 = io_task.buffer[io_task.offset++];
 
-    asm volatile(
-        "jmp io_interrupt_common \n\t" \
-        ::
-    );
+    JUMP(io_interrupt_common);
 }

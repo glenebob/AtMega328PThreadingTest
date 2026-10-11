@@ -12,7 +12,8 @@
 static int uart_putchar_spin(char c, FILE *stream);
 
 static const uint32_t bit_delays[] = { 200000, 800000 };
-const __flash char crash_report_format[] PROGMEM = "exit(%d/0x%X)\n";
+
+static const __flash char crash_report_format[] PROGMEM = "exit(%d/0x%X)\n";
 
 void abort()
 {
@@ -60,31 +61,21 @@ void exit(int status)
     }
 }
 
-static void io_write_spin(uint8_t *buffer, uint8_t buffer_length)
+static void io_write_spin(uint8_t b)
 {
-    while (buffer_length--)
-    {
-        while (!(UCSR0A & (1 << UDRE0)));
+    while (!(UCSR0A & (1 << UDRE0)));
 
-        UDR0 = *buffer++;
-    }
+    UDR0 = b;
 }
 
 static int uart_putchar_spin(char c, FILE *stream)
 {
     if (c == '\n')
     {
-        char buffer[2];
-
-        buffer[0] = '\r';
-        buffer[1] = c;
-
-        io_write_spin((uint8_t*) buffer, 2);
+        io_write_spin('\r');
     }
-    else
-    {
-        io_write_spin((uint8_t*) &c, 1);
-    }
+
+    io_write_spin(c);
 
     return 0;
 }

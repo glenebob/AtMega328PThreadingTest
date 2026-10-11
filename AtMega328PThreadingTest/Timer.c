@@ -7,9 +7,10 @@
 #include "Error.h"
 #include "Interrupt.h"
 #include "Thread.h"
+#include "Stack.h"
 #include "LinkedList.h"
 
-#define TIMER_COUNT 10
+#define TIMER_COUNT 5
 
 typedef struct
 {
@@ -17,29 +18,42 @@ typedef struct
     uint16_t ticks;
 } timer_t;
 
+typedef struct
+{
+    stack_header_t header;
+    object_id_t timers[TIMER_COUNT];
+} timer_free_list_t;
+
 static timer_t timers[TIMER_COUNT];
+static timer_free_list_t timer_free_list;
 static double_linked_list_node_t timer_nodes[TIMER_COUNT];
 static double_linked_list_t timer_list;
 
 void timers_initialize()
 {
+    stack_initialize(&timer_free_list.header, TIMER_COUNT);
     dl_initialize(&timer_list, &timer_nodes[0], TIMER_COUNT);
+
+    for (object_id_t timer_id = TIMER_COUNT - 1; timer_id != OBJECT_ID_INVALID; --timer_id)
+    {
+        stack_push(&timer_free_list, &timer_id, sizeof(object_id_t));
+    }
 }
 
 uint8_t timer_add(uint8_t thread_id, uint16_t ticks)
 {
     INTERRUPT_RAISE_LEVEL();
     
-    uint8_t node_id = dl_create_unlinked(&timer_list);
+    object_id_t new_timer_id;
 
-    if (node_id == OBJECT_ID_INVALID)
+    if (!stack_pop(&timer_free_list, &new_timer_id, sizeof(object_id_t)))
     {
         INTERRUPT_LOWER_LEVEL();
 
-        return node_id;
+        return new_timer_id;
     }
 
-    timer_t *timer = &timers[node_id];
+    timer_t *timer = &timers[new_timer_id];
 
     timer->thread_id = thread_id;
     timer->ticks = ticks;
@@ -50,25 +64,25 @@ uint8_t timer_add(uint8_t thread_id, uint16_t ticks)
 
         if (timer->ticks >= ticks)
         {
-            dl_insert(&timer_list, node_id, timer_id);
+            dl_insert(&timer_list, new_timer_id, timer_id);
 
             INTERRUPT_LOWER_LEVEL();
 
-            return node_id;
+            return new_timer_id;
         }
     }
 
-    dl_append(&timer_list, node_id);
+    dl_append(&timer_list, new_timer_id);
 
     INTERRUPT_LOWER_LEVEL();
 
-    return node_id;
+    return new_timer_id;
 }
 
 void timer_cancel(uint8_t timer_id)
 {
-    dl_unlink(&timer_list, timer_id);
-    dl_delete_unlinked(&timer_list, timer_id);
+    dl_remove(&timer_list, timer_id);
+    stack_push(&timer_free_list, &timer_id, sizeof(object_id_t));
 }
 
 // Must be called with interrupts disabled.
@@ -83,13 +97,8 @@ void advance_active_timers()
 
         if (!--timer->ticks)
         {
-            thread_ensure_runnable(timer->thread_id);
+            thread_queue(timer->thread_id);
             timer_cancel(timer_id);
-
-            if (timer->thread_id == 0)
-            {
-                thread_ensure_runnable(timer->thread_id);
-            }
         }
         else
         {
