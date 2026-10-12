@@ -54,8 +54,8 @@ void io_task_init()
     UBRR0L = (uint8_t) BAUDRATE;
     // Set frame format: 8 data bits, 1 stop bit
     UCSR0C = (1 << UCSZ01) | (1 << UCSZ00);
-    // Enable the transmitter
-    UCSR0B = (1 << TXEN0);
+    // Enable the receiver and transmitter
+    UCSR0B = (1 << RXEN0) | (1 << TXEN0);
     
     fdev_setup_stream(&uart_stdin, NULL, uart_getchar, _FDEV_SETUP_READ);
     fdev_setup_stream(&uart_stdout_err, uart_putchar, NULL, _FDEV_SETUP_WRITE);
@@ -108,15 +108,28 @@ int io_read(uint8_t *buffer, uint8_t buffer_length, uint16_t timeout)
     }
 
     io_task.offset = 0;
+
+    if (UCSR0A & (1 << RXC0))
+    {
+        buffer[io_task.offset++] = UDR0;
+
+        if (io_task.offset == buffer_length)
+        {
+            INTERRUPT_LOWER_LEVEL();
+
+            return buffer_length;
+        }
+    }
+
     io_task.status = IO_READ;
     io_task.buffer = buffer;
     io_task.buffer_length = buffer_length;
 
-    UCSR0B |= (1 << RXEN0) | (1 << RXCIE0);
+    UCSR0B |= (1 << RXCIE0);
 
     int bytes_transferred = io_dispatch(timeout);
 
-    UCSR0B &= ~((1 << RXEN0) | (1 << RXCIE0));
+    UCSR0B &= ~(1 << RXCIE0);
 
     INTERRUPT_LOWER_LEVEL();
 
@@ -248,7 +261,7 @@ ISR(USART_RX_vect)
         JUMP(thread_restore_first_half_dispatch_from_isr);
     }
 
-    UCSR0B &= ~((1 << RXEN0) | (1 << RXCIE0));
+    UCSR0B &= ~(1 << RXCIE0);
 
     JUMP(io_interrupt_common);
 }

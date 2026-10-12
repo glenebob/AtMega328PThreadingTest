@@ -13,7 +13,7 @@ static int uart_putchar_spin(char c, FILE *stream);
 
 static const uint32_t bit_delays[] = { 200000, 800000 };
 
-static const __flash char crash_report_format[] PROGMEM = "exit(%d/0x%X)\n";
+static const __flash char crash_report_format[] PROGMEM = "exit(%d/0x%04X)\n";
 
 void abort()
 {
@@ -29,11 +29,11 @@ void exit(int status)
 
     io_crash_init(uart_putchar_spin);
 
-    uint8_t significantBitCount = 2;
-    
-    for (int8_t shift = 7; shift >= 0; --shift)
+    uint8_t significantBitCount = 1;
+
+    for (uint8_t shift = 15; shift != 0xFF; --shift)
     {
-        if (status >> shift)
+        if ((unsigned int) status >> shift)
         {
             significantBitCount += shift;
             break;
@@ -44,20 +44,32 @@ void exit(int status)
     {
         printf_P(crash_report_format, status, status);
 
-        for (int8_t shift = significantBitCount - 1; shift >= 0; --shift)
+        uint32_t bitDelay;
+
+        bitDelay = bit_delays[0];
+
+        PORTB |= (1 << PB5);
+
+        for (volatile uint32_t i = 0; i < bitDelay; ++i);
+
+        PORTB &= ~(1 << PB5);
+
+        for (volatile uint32_t i = 0; i < 200000; ++i);
+
+        for (uint8_t shift = significantBitCount - 1; shift != 0xFF; --shift)
         {
-            uint32_t bitDelay = bit_delays[((status >> shift) & 0b00000001)];
+            bitDelay = bit_delays[(((unsigned int) status >> shift) & 0b00000001)];
 
             PORTB |= (1 << PB5);
 
-            for (uint32_t i = 0; i < bitDelay; ++i);
+            for (volatile uint32_t i = 0; i < bitDelay; ++i);
             
             PORTB &= ~(1 << PB5);
 
-            for (uint32_t i = 0; i < 200000; ++i);
+            for (volatile uint32_t i = 0; i < 200000; ++i);
         }
 
-        for (uint32_t i = 0; i < 2000000; ++i);
+        for (volatile uint32_t i = 0; i < 2000000; ++i);
     }
 }
 
