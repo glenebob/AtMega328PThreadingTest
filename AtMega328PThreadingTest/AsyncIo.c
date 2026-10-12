@@ -52,14 +52,14 @@ void io_task_init()
     // Set baud rate
     UBRR0H = (uint8_t) (BAUDRATE >> 8);
     UBRR0L = (uint8_t) BAUDRATE;
-    // Set frame format: 8data, 2stop bit
+    // Set frame format: 8 data bits, 2 stop bits
     UCSR0C = (1 << UCSZ01) | (1 << UCSZ00);
     // Enable receiver and transmitter
-    UCSR0B |= (1 << RXEN0) | (1 << TXEN0);
-    // Enable interrupts (Fire TX interrupt after bits sent)
-    UCSR0B |= (1 << RXCIE0) | (1 << TXCIE0);
-    // Enable interrupts (Fire TX interrupt after buffer empty)
-//    UCSR0B |= (1 << RXEN0) | (1 << TXEN0) | (1 << RXCIE0) | (1 << TXCIE0);
+    UCSR0B = (1 << RXEN0) | (1 << TXEN0);
+    // Enable receive interrupts
+    // Transmit interrupts are turned on when writing and turned off
+    // when writing completes or times out
+    UCSR0B |= (1 << RXCIE0);
     
     fdev_setup_stream(&uart_stdin, NULL, uart_getchar, _FDEV_SETUP_READ);
     fdev_setup_stream(&uart_stdout_err, uart_putchar, NULL, _FDEV_SETUP_WRITE);
@@ -72,7 +72,7 @@ void io_task_init()
 
 void io_crash_init(int(*put)(char, struct __file *))
 {
-    UCSR0B &= ~((1 << RXCIE0) | (1 << TXCIE0));
+    UCSR0B = (1 << TXEN0);
 
     fdev_setup_stream(&uart_stdout_err, put, NULL, _FDEV_SETUP_WRITE);
 }
@@ -92,6 +92,8 @@ static int io_dispatch(uint16_t timeout)
 
     thread_block(current_thread_id);
     thread_yield_dispatch();
+
+    INTERRUPT_RAISE_LEVEL();
 
     int return_value = io_task.offset < io_task.buffer_length ? -1 : io_task.buffer_length;
 
@@ -127,12 +129,16 @@ int io_read(uint8_t *buffer, uint8_t buffer_length, uint16_t timeout)
     io_task.buffer = buffer;
     io_task.buffer_length = buffer_length;
 
-    return io_dispatch(timeout);
+    int bytes_transferred = io_dispatch(timeout);
+
+    INTERRUPT_LOWER_LEVEL();
+
+    return bytes_transferred;
 }
 
 int io_write(uint8_t *buffer, uint8_t buffer_length, uint16_t timeout)
 {
-   INTERRUPT_RAISE_LEVEL();
+    INTERRUPT_RAISE_LEVEL();
 
     if (io_task.status)
     {
@@ -153,11 +159,19 @@ int io_write(uint8_t *buffer, uint8_t buffer_length, uint16_t timeout)
         }
     }
 
+    UCSR0B |= (1 << UDRIE0);
+
     io_task.status = IO_WRITE;
     io_task.buffer = buffer;
     io_task.buffer_length = buffer_length;
 
-    return io_dispatch(timeout);
+    int bytes_transferred = io_dispatch(timeout);
+
+    UCSR0B &= ~(1 << UDRIE0);
+
+    INTERRUPT_LOWER_LEVEL();
+
+    return bytes_transferred;
 }
 
 static int uart_getchar(FILE *stream)
@@ -210,13 +224,7 @@ void set_getchar_timeout(uint16_t timeout)
 __attribute__((naked))
 void io_interrupt_common()
 {
-    if (io_task.offset != io_task.buffer_length)
-    {
-        JUMP(thread_restore_first_half_dispatch_from_isr);
-    }
-
-    SAVE_SECOND_HALF_CONTEXT();
-    SAVE_STACK_POINTER();
+    static object_id_t new_thread_id;
 
     io_task.status = IO_INACTIVE;
 
@@ -226,7 +234,16 @@ void io_interrupt_common()
     }
 
     thread_queue(io_task.thread_id);
-    thread_select_and_change();
+
+    if (!thread_select(&new_thread_id))
+    {
+        JUMP(thread_restore_first_half_dispatch_from_isr);
+    }
+
+    SAVE_SECOND_HALF_CONTEXT();
+    SAVE_STACK_POINTER();
+
+    thread_change(new_thread_id);
 
     JUMP(thread_restore_all_dispatch_from_isr);
 }
@@ -241,18 +258,21 @@ ISR(USART_RX_vect)
 
     if (io_task.status != IO_READ)
     {
-        RESTORE_FIRST_HALF_CONTEXT();
-
-        reti();
+        JUMP(thread_restore_first_half_dispatch_from_isr);
     }
 
     io_task.buffer[io_task.offset++] = b;
+
+    if (io_task.offset != io_task.buffer_length)
+    {
+        JUMP(thread_restore_first_half_dispatch_from_isr);
+    }
 
     JUMP(io_interrupt_common);
 }
 
 __attribute__((naked))
-ISR(USART_TX_vect)
+ISR(USART_UDRE_vect)
 {
     SAVE_FIRST_HALF_CONTEXT();
     CLEAR_R1();
@@ -265,6 +285,13 @@ ISR(USART_TX_vect)
     }
 
     UDR0 = io_task.buffer[io_task.offset++];
+
+    if (io_task.offset != io_task.buffer_length)
+    {
+        JUMP(thread_restore_first_half_dispatch_from_isr);
+    }
+
+    UCSR0B &= ~(1 << UDRIE0);
 
     JUMP(io_interrupt_common);
 }

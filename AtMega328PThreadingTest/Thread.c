@@ -103,8 +103,10 @@ void threads_initialize()
 
     stack_initialize(&thread_free_list.header, THREAD_USER_COUNT);
 
-    ring_buffer_initialize(&run_queues[0].header, THREAD_USER_COUNT);
-    ring_buffer_initialize(&run_queues[1].header, THREAD_USER_COUNT);
+    for (int i = 0; i < PRIORITY_COUNT; ++i)
+    {
+        ring_buffer_initialize(&run_queues[i].header, THREAD_USER_COUNT);
+    }
 
     for (object_id_t thread_id = THREAD_COUNT - 1; thread_id >= THREAD_ID_FIRST_USER; --thread_id)
     {
@@ -240,12 +242,7 @@ void thread_requeue()
         break;
     }
 }
-/*
-void thread_move_first_to_end()
-{
-    dl_move_first_to_end(&thread_run_queue);
-}
-*/
+
 void thread_destroy(object_id_t thread_id)
 {
     INTERRUPT_RAISE_LEVEL();
@@ -407,6 +404,22 @@ void thread_restore_all_dispatch_from_isr()
     JUMP(thread_restore_first_half_dispatch_from_isr);
 }
 
+void advance_thread_ticks()
+{
+    if (current_thread->ticks != 0xFF)
+    {
+        if (current_thread->ticks)
+        {
+            --current_thread->ticks;
+
+            if (!current_thread->ticks)
+            {
+                thread_requeue();
+            }
+        }
+    }
+}
+
 __attribute__((naked))
 ISR(TIMER0_COMPA_vect)
 {
@@ -422,18 +435,7 @@ ISR(TIMER0_COMPA_vect)
         JUMP(thread_restore_first_half_dispatch_from_isr);
     }
 
-    if (current_thread->ticks != 0xFF)
-    {
-        if (current_thread->ticks)
-        {
-            --current_thread->ticks;
-
-            if (!current_thread->ticks)
-            {
-                thread_requeue();
-            }
-        }
-    }
+    advance_thread_ticks();
 
     if (!thread_select(&new_thread_id))
     {
