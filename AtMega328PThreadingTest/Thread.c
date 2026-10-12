@@ -332,6 +332,7 @@ static void global_thread_entry()
     JUMP(thread_restore_all_dispatch_from_non_isr);
 }
 
+__attribute__((OS_task))
 static void thread_idle_entry(void *unused_arguments)
 {
     static const __flash char string_idle[] PROGMEM = "Idle!";

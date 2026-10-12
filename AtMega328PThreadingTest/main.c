@@ -63,6 +63,7 @@ void thread_3_entry(void*);
 void thread_4_entry(void*);
 void thread_5_entry(void*);
 
+__attribute__((OS_task))
 void thread_root_entry(void *unused_arguments)
 {
     static const __flash char string_root[] PROGMEM = "Root!";
@@ -90,6 +91,7 @@ void thread_root_entry(void *unused_arguments)
     memset(status, 0, sizeof(status));
 }
 
+__attribute__((OS_task))
 void thread_3_entry(void *unused_arguments)
 {
     static const __flash char string_thread_3[] PROGMEM = "Thread 3!";
@@ -135,6 +137,7 @@ void test_kernel_task(void *unused_arguments)
     printf_P(PSTR("Kernel Thread exiting...\n"));
 }
 
+__attribute__((OS_task))
 void thread_4_entry(void *unused_arguments)
 {
     static const __flash char string_thread_4[] PROGMEM = "Thread 4!";
@@ -229,6 +232,7 @@ void thread_4_entry(void *unused_arguments)
     memset(status, 0, sizeof(status));
 }
 
+__attribute__((OS_task))
 void thread_5_entry(void *unused_arguments)
 {
     static const __flash char string_thread_5[] PROGMEM = "Thread 5!";
@@ -259,6 +263,7 @@ void thread_5_entry(void *unused_arguments)
     memset(status, 0, sizeof(status));
 }
 
+__attribute__((OS_main))
 int main()
 {
     static const __flash char string_kernel[] PROGMEM = "Kernel!";

@@ -35,7 +35,7 @@ typedef struct
     uint8_t thread_id;
 } io_task_t;
 
-static io_task_t io_task;
+static volatile io_task_t io_task;
 
 static int uart_getchar(FILE *stream);
 static int uart_putchar(char c, FILE *stream);
@@ -52,14 +52,10 @@ void io_task_init()
     // Set baud rate
     UBRR0H = (uint8_t) (BAUDRATE >> 8);
     UBRR0L = (uint8_t) BAUDRATE;
-    // Set frame format: 8 data bits, 2 stop bits
+    // Set frame format: 8 data bits, 1 stop bit
     UCSR0C = (1 << UCSZ01) | (1 << UCSZ00);
-    // Enable receiver and transmitter
-    UCSR0B = (1 << RXEN0) | (1 << TXEN0);
-    // Enable receive interrupts
-    // Transmit interrupts are turned on when writing and turned off
-    // when writing completes or times out
-    UCSR0B |= (1 << RXCIE0);
+    // Enable the transmitter
+    UCSR0B = (1 << TXEN0);
     
     fdev_setup_stream(&uart_stdin, NULL, uart_getchar, _FDEV_SETUP_READ);
     fdev_setup_stream(&uart_stdout_err, uart_putchar, NULL, _FDEV_SETUP_WRITE);
@@ -112,24 +108,15 @@ int io_read(uint8_t *buffer, uint8_t buffer_length, uint16_t timeout)
     }
 
     io_task.offset = 0;
-
-    if (UCSR0A & (1 << RXC0))
-    {
-        buffer[io_task.offset++] = UDR0;
-        
-        if (io_task.offset == buffer_length)
-        {
-            INTERRUPT_LOWER_LEVEL();
-            
-            return buffer_length;
-        }
-    }
-
     io_task.status = IO_READ;
     io_task.buffer = buffer;
     io_task.buffer_length = buffer_length;
 
+    UCSR0B |= (1 << RXEN0) | (1 << RXCIE0);
+
     int bytes_transferred = io_dispatch(timeout);
+
+    UCSR0B &= ~((1 << RXEN0) | (1 << RXCIE0));
 
     INTERRUPT_LOWER_LEVEL();
 
@@ -159,11 +146,11 @@ int io_write(uint8_t *buffer, uint8_t buffer_length, uint16_t timeout)
         }
     }
 
-    UCSR0B |= (1 << UDRIE0);
-
     io_task.status = IO_WRITE;
     io_task.buffer = buffer;
     io_task.buffer_length = buffer_length;
+
+    UCSR0B |= (1 << UDRIE0);
 
     int bytes_transferred = io_dispatch(timeout);
 
@@ -254,19 +241,14 @@ ISR(USART_RX_vect)
     SAVE_FIRST_HALF_CONTEXT();
     CLEAR_R1();
 
-    uint8_t b = UDR0;
-
-    if (io_task.status != IO_READ)
-    {
-        JUMP(thread_restore_first_half_dispatch_from_isr);
-    }
-
-    io_task.buffer[io_task.offset++] = b;
+    io_task.buffer[io_task.offset++] = UDR0;
 
     if (io_task.offset != io_task.buffer_length)
     {
         JUMP(thread_restore_first_half_dispatch_from_isr);
     }
+
+    UCSR0B &= ~((1 << RXEN0) | (1 << RXCIE0));
 
     JUMP(io_interrupt_common);
 }
@@ -276,13 +258,6 @@ ISR(USART_UDRE_vect)
 {
     SAVE_FIRST_HALF_CONTEXT();
     CLEAR_R1();
-
-    if (io_task.status != IO_WRITE)
-    {
-        RESTORE_FIRST_HALF_CONTEXT();
-
-        reti();
-    }
 
     UDR0 = io_task.buffer[io_task.offset++];
 
