@@ -17,6 +17,7 @@
 #include "Timer.h"
 #include "Thread.h"
 #include "AsyncIo.h"
+#include "Mutex.h"
 
 static const __flash char string_iterations[] PROGMEM = "%s: Iterations: %lu, Read: %lu, Write: %lu, Idle Spins: %lu\n";
 
@@ -31,6 +32,8 @@ static const __flash char string_wheee[] PROGMEM =
     "eeeeeeeeeeeeeeeeeeeeeeeee"
     "eeeeeeeeeeeeeeeeeeeeeeeee\r\n"
     "End big single write\r\n";
+
+mutex_t io_mutex;
 
 void thread_root_entry(void*);
 
@@ -77,6 +80,8 @@ void thread_root_entry(void *unused_arguments)
     memcpy_P(__malloc_heap_end - 12, PSTR("<malloc end>"), 12);
 
     DDRB |= (1 << PB5); 
+
+    mutex_initialize(&io_mutex);
 
     thread_create(thread_3_entry, NULL, true);
     thread_create(thread_4_entry, NULL, true);
@@ -150,6 +155,7 @@ void thread_4_entry(void *unused_arguments)
 
     set_getchar_timeout(5000);
 
+    mutex_lock(&io_mutex);
     printf("\n");
 
     for (int i = 0; i < 60; ++i)
@@ -159,6 +165,7 @@ void thread_4_entry(void *unused_arguments)
     }        
 
     printf_P(PSTR(" Let's go!\n"));
+    mutex_unlock(&io_mutex);
 
     thread_sleep(1000);
 
@@ -173,9 +180,11 @@ void thread_4_entry(void *unused_arguments)
         {
             thread_sleep(1000);
 
+            mutex_lock(&io_mutex);
             printf_P(PSTR("Allocate, copy, print, and free %u bytes...\n"), sizeof(string_wheee));
 
             uint8_t *dynamic = malloc(sizeof(string_wheee));
+            mutex_unlock(&io_mutex);
 
             if (!dynamic)
             {
@@ -184,17 +193,25 @@ void thread_4_entry(void *unused_arguments)
 
             memcpy_P(dynamic, string_wheee, sizeof(string_wheee));
 
+            mutex_lock(&io_mutex);
             io_write(dynamic, (uint8_t) sizeof(string_wheee), 0);
+            mutex_unlock(&io_mutex);
 
             memset(dynamic, '/', sizeof(string_wheee));
+
+            mutex_lock(&io_mutex);
             free(dynamic);
+            mutex_unlock(&io_mutex);
 
             thread_sleep(1000);
 
+            mutex_lock(&io_mutex);
             printf_P(PSTR("Kernel task...\n"));
+            mutex_unlock(&io_mutex);
 
             post_kernel_task(test_kernel_task, NULL);
 
+            mutex_lock(&io_mutex);
             printf_P(PSTR("That was fun.\n"));
 
             length = printf_P(string_iterations, "Thread 4", i, read_count, write_count, idle_spin_count);
@@ -219,10 +236,14 @@ void thread_4_entry(void *unused_arguments)
                 }
             }                
 
+            mutex_unlock(&io_mutex);
+
             thread_sleep(1000);
         }
 
+        mutex_lock(&io_mutex);
         length = printf_P(string_iterations, "Thread 4", i, read_count, write_count, idle_spin_count);
+        mutex_unlock(&io_mutex);
 
         write_count += length;
 
@@ -241,13 +262,16 @@ void thread_5_entry(void *unused_arguments)
 
     char status[sizeof(string_thread_5) - 1];
 
+    uint32_t write_count = 0;
+    int length;
+
     memcpy_P(status, string_thread_5, sizeof(status));
 
     int multiply1;
     int multiply2;
     int multiply3;
 
-    while (trueFlag)
+    for (uint32_t i = 0; trueFlag; ++i)
     {
         do
         {
@@ -257,7 +281,15 @@ void thread_5_entry(void *unused_arguments)
 
             thread_sleep(5);
         }
-        while (multiply3);
+        while ((uint32_t) multiply3 > 500);
+
+        mutex_lock(&io_mutex);
+        length = printf_P(string_iterations, "Thread 5", i, (uint32_t) 0, write_count, idle_spin_count);
+        mutex_unlock(&io_mutex);
+
+        write_count += length;
+
+        thread_sleep(250);
     }
 
     memset(status, 0, sizeof(status));

@@ -86,6 +86,13 @@ bool ring_buffer_peek(void *buffer_data, void *data, uint8_t data_size)
     return true;
 }
 
+bool ring_buffer_is_empty(void *buffer_data)
+{
+    ring_buffer_t *buffer = (ring_buffer_t*) buffer_data;
+
+    return buffer->header.next_out == 0xFF;
+}
+
 void ring_buffer_rotate(void *buffer_data, uint8_t data_size)
 {
     ring_buffer_t *buffer = (ring_buffer_t*) buffer_data;

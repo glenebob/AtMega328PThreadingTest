@@ -21,6 +21,9 @@ typedef struct thread_t
 #define THREAD_ID_IDLE 1
 #define THREAD_ID_FIRST_USER 2
 
+#define THREAD_COUNT 6
+#define THREAD_USER_COUNT THREAD_COUNT - THREAD_ID_FIRST_USER
+
 extern uint16_t malloc_heap_size;
 
 extern uint8_t runnable_thread_count;

@@ -165,6 +165,12 @@
     <Compile Include="Abort.c">
       <SubType>compile</SubType>
     </Compile>
+    <Compile Include="Mutex.c">
+      <SubType>compile</SubType>
+    </Compile>
+    <Compile Include="Mutex.h">
+      <SubType>compile</SubType>
+    </Compile>
     <Compile Include="RingBuffer.c">
       <SubType>compile</SubType>
     </Compile>
