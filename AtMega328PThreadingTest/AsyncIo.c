@@ -10,7 +10,6 @@
 
 #include "Types.h"
 #include "Error.h"
-#include "Interrupt.h"
 #include "Timer.h"
 #include "Thread.h"
 #include "Context.h"
@@ -45,7 +44,7 @@ static FILE uart_stdout_err;
 
 static uint16_t getchar_timeout;
 
-void io_task_init()
+void io_task_initialize()
 {
     io_task.status = IO_INACTIVE;
 
@@ -86,10 +85,8 @@ static int io_dispatch(uint16_t timeout)
         io_task.timer_id = OBJECT_ID_INVALID;
     }
 
-    thread_block(current_thread_id);
+    thread_block();
     thread_yield_dispatch();
-
-    INTERRUPT_RAISE_LEVEL();
 
     int return_value = io_task.offset < io_task.buffer_length ? -1 : io_task.buffer_length;
 
@@ -100,7 +97,7 @@ static int io_dispatch(uint16_t timeout)
 
 int io_read(uint8_t *buffer, uint8_t buffer_length, uint16_t timeout)
 {
-    INTERRUPT_RAISE_LEVEL();
+    cli();
 
     if (io_task.status)
     {
@@ -115,7 +112,7 @@ int io_read(uint8_t *buffer, uint8_t buffer_length, uint16_t timeout)
 
         if (io_task.offset == buffer_length)
         {
-            INTERRUPT_LOWER_LEVEL();
+            sei();
 
             return buffer_length;
         }
@@ -131,14 +128,14 @@ int io_read(uint8_t *buffer, uint8_t buffer_length, uint16_t timeout)
 
     UCSR0B &= ~(1 << RXCIE0);
 
-    INTERRUPT_LOWER_LEVEL();
+    sei();
 
     return bytes_transferred;
 }
 
 int io_write(uint8_t *buffer, uint8_t buffer_length, uint16_t timeout)
 {
-    INTERRUPT_RAISE_LEVEL();
+    cli();
 
     if (io_task.status)
     {
@@ -153,7 +150,7 @@ int io_write(uint8_t *buffer, uint8_t buffer_length, uint16_t timeout)
         
         if (io_task.offset == buffer_length)
         {
-            INTERRUPT_LOWER_LEVEL();
+            sei();
             
             return buffer_length;
         }
@@ -169,7 +166,7 @@ int io_write(uint8_t *buffer, uint8_t buffer_length, uint16_t timeout)
 
     UCSR0B &= ~(1 << UDRIE0);
 
-    INTERRUPT_LOWER_LEVEL();
+    sei();
 
     return bytes_transferred;
 }
@@ -222,7 +219,7 @@ void set_getchar_timeout(uint16_t timeout)
 }
 
 __attribute__((naked))
-void io_interrupt_common()
+void io_interrupt_common(void)
 {
     static object_id_t new_thread_id;
 
@@ -237,7 +234,7 @@ void io_interrupt_common()
 
     if (!thread_select(&new_thread_id))
     {
-        JUMP(thread_restore_first_half_dispatch_from_isr);
+        JUMP(thread_restore_first_half_dispatch);
     }
 
     SAVE_SECOND_HALF_CONTEXT();
@@ -245,20 +242,19 @@ void io_interrupt_common()
 
     thread_change(new_thread_id);
 
-    JUMP(thread_restore_all_dispatch_from_isr);
+    JUMP(thread_restore_all_dispatch);
 }
 
 __attribute__((naked))
 ISR(USART_RX_vect)
 {
-    SAVE_FIRST_HALF_CONTEXT();
-    CLEAR_R1();
+    SAVE_FIRST_HALF_CONTEXT_ISR();
 
     io_task.buffer[io_task.offset++] = UDR0;
 
     if (io_task.offset != io_task.buffer_length)
     {
-        JUMP(thread_restore_first_half_dispatch_from_isr);
+        JUMP(thread_restore_first_half_dispatch);
     }
 
     UCSR0B &= ~(1 << RXCIE0);
@@ -269,14 +265,13 @@ ISR(USART_RX_vect)
 __attribute__((naked))
 ISR(USART_UDRE_vect)
 {
-    SAVE_FIRST_HALF_CONTEXT();
-    CLEAR_R1();
+    SAVE_FIRST_HALF_CONTEXT_ISR();
 
     UDR0 = io_task.buffer[io_task.offset++];
 
     if (io_task.offset != io_task.buffer_length)
     {
-        JUMP(thread_restore_first_half_dispatch_from_isr);
+        JUMP(thread_restore_first_half_dispatch);
     }
 
     UCSR0B &= ~(1 << UDRIE0);

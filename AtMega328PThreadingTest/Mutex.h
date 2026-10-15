@@ -14,10 +14,11 @@ typedef struct
 typedef struct
 {
     object_id_t thread_id;
+    uint8_t use_count;
     mutex_wait_queue_t waiters;
 } mutex_t;
 
-void *mutex_create();
+void *mutex_create(void);
 void mutex_initialize(void *mutex_data);
 void mutex_destroy(void *mutex_data);
 bool mutex_lock(void *mutex_data);

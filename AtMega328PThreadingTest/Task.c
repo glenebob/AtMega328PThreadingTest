@@ -1,9 +1,10 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+#include <avr/interrupt.h>
+
 #include "Types.h"
 #include "Error.h"
-#include "Interrupt.h"
 #include "Stack.h"
 #include "RingBuffer.h"
 
@@ -46,13 +47,13 @@ void task_queue_initialize()
 
 bool task_queue_push(task_handler_t handler, void *arguments)
 {
-    INTERRUPT_RAISE_LEVEL();
+    cli();
 
     object_id_t task_id;
 
     if (!stack_pop(&task_free_list, &task_id, sizeof(object_id_t)))
     {
-        INTERRUPT_LOWER_LEVEL();
+        sei();
 
         return false;
     }
@@ -62,20 +63,20 @@ bool task_queue_push(task_handler_t handler, void *arguments)
 
     ring_buffer_push(&task_queue, &task_id, sizeof(object_id_t));
 
-    INTERRUPT_LOWER_LEVEL();
+    sei();
 
     return true;
 }
 
 bool task_queue_pop(task_handler_t *handler, void **arguments)
 {
-    INTERRUPT_RAISE_LEVEL();
+    cli();
 
     object_id_t task_id;
 
     if (!ring_buffer_pop(&task_queue, &task_id, sizeof(object_id_t)))
     {
-        INTERRUPT_LOWER_LEVEL();
+        sei();
 
         return false;
     }
@@ -85,7 +86,7 @@ bool task_queue_pop(task_handler_t *handler, void **arguments)
 
     stack_push(&task_free_list, &task_id, sizeof(object_id_t));
 
-    INTERRUPT_LOWER_LEVEL();
+    sei();
 
     return true;
 }

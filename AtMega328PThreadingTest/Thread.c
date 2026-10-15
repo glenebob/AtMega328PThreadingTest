@@ -1,11 +1,13 @@
 #include <stdint.h>
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 
+#include <avr/interrupt.h>
 #include <avr/pgmspace.h>
 
 #include "Types.h"
-#include "Interrupt.h"
+#include "Error.h"
 #include "Stack.h"
 #include "RingBuffer.h"
 #include "Timer.h"
@@ -43,7 +45,7 @@ uint8_t current_thread_priority;
 
 volatile uint32_t idle_spin_count = 0;
 
-static void global_thread_entry();
+static void global_thread_entry(void);
 static void thread_idle_entry(void*);
 
 extern uint8_t __data_start;
@@ -52,6 +54,8 @@ extern uint8_t _end;
 uint16_t malloc_heap_size;
 
 static void initialize_thread_stack(object_id_t thread_id, thread_t *thread);
+
+int main(void);
 
 void threads_initialize()
 {
@@ -79,6 +83,8 @@ void threads_initialize()
 
     // Kernel thread - currently running
     thread->status = THREAD_STATUS_RUNNABLE;
+    thread->entry_point = (thread_entry_t) main;
+    thread->argument = NULL;
     thread->ticks = 0xFF;
 
     ++thread_id;
@@ -121,8 +127,8 @@ static void initialize_thread_stack(object_id_t thread_id, thread_t *thread)
     typedef struct
     {
         uint8_t r1_register;
-        uint8_t r0_register_placeholder_not_used;
         uint8_t status_register;
+        uint8_t r0_register_placeholder_not_used;
         struct
         {
             uint8_t high;
@@ -142,7 +148,7 @@ static void initialize_thread_stack(object_id_t thread_id, thread_t *thread)
     }
 
     stack_init_block->r1_register = 0;
-    stack_init_block->status_register = 0;
+    stack_init_block->status_register = 0; //0x80;
     stack_init_block->return_address.high = (uint16_t) global_thread_entry >> 8;
     stack_init_block->return_address.low = (uint16_t) global_thread_entry & 0xFF;
 
@@ -151,13 +157,13 @@ static void initialize_thread_stack(object_id_t thread_id, thread_t *thread)
 
 object_id_t thread_create(thread_entry_t entry_point, void *argument, bool preemptable)
 {
-    INTERRUPT_RAISE_LEVEL();
+    cli();
 
     object_id_t thread_id = OBJECT_ID_INVALID;
 
     stack_pop(&thread_free_list, &thread_id, sizeof(object_id_t));
 
-    INTERRUPT_LOWER_LEVEL();
+    sei();
 
     if (thread_id == OBJECT_ID_INVALID)
     {
@@ -172,23 +178,18 @@ object_id_t thread_create(thread_entry_t entry_point, void *argument, bool preem
     thread->entry_point = entry_point;
     thread->argument = argument;
     thread->ticks = preemptable ? 0 : 0xFF;
-
-    INTERRUPT_RAISE_LEVEL();
+    
+    cli();
 
     thread_queue(thread_id);
 
-    INTERRUPT_LOWER_LEVEL();
+    sei();
 
     return thread_id;
 }
 
 void thread_block()
 {
-    if (current_thread_id == 1)
-    {
-        abort();
-    }
-
     if (current_thread_priority == 0)
     {
         threads[THREAD_ID_KERNEL].status = THREAD_STATUS_BLOCKED;
@@ -242,12 +243,12 @@ void thread_requeue()
 
 void thread_destroy(object_id_t thread_id)
 {
-    INTERRUPT_RAISE_LEVEL();
+    cli();
 
     threads[thread_id].status = THREAD_STATUS_DORMANT;
     stack_push(&thread_free_list, &thread_id, sizeof(object_id_t));
 
-    INTERRUPT_LOWER_LEVEL();
+    sei();
 }
 
 void thread_sleep(uint16_t milliseconds)
@@ -257,11 +258,13 @@ void thread_sleep(uint16_t milliseconds)
 		return;
 	}
 
-	INTERRUPT_RAISE_LEVEL();
+	cli();
 
 	timer_add(current_thread_id, milliseconds);
-	thread_block(current_thread_id);
-	thread_yield_dispatch();
+    thread_block();
+    thread_yield_dispatch();
+
+    sei();
 }
 
 bool thread_select(object_id_t *new_thread_id)
@@ -315,18 +318,20 @@ void thread_change(object_id_t thread_id)
 }
 
 __attribute__((naked))
-static void global_thread_entry()
+static void global_thread_entry(void)
 {
+    sei();
+
     current_thread->entry_point(current_thread->argument);
 
-    INTERRUPT_RAISE_LEVEL();
+    cli();
 
-    thread_block(current_thread_id);
+    thread_block();
     thread_destroy(current_thread_id);
 
     thread_select_and_change();
 
-    JUMP(thread_restore_all_dispatch_from_non_isr);
+    JUMP(thread_restore_all_dispatch);
 }
 
 __attribute__((OS_task))
@@ -360,49 +365,28 @@ void thread_yield_dispatch()
 
     thread_select_and_change();
 
-    JUMP(thread_restore_all_dispatch_from_non_isr);
+    JUMP(thread_restore_all_dispatch);
 }
 
 // Must be jumped to
 __attribute__((naked))
-void thread_restore_first_half_dispatch_from_non_isr()
+void thread_restore_first_half_dispatch()
 {
     RESTORE_FIRST_HALF_CONTEXT();
-    INTERRUPT_LOWER_LEVEL_NO_ENABLE();
-
-    reti();
+    RETURN();
 }
 
 // Must be jumped to
 __attribute__((naked))
-void thread_restore_all_dispatch_from_non_isr()
+void thread_restore_all_dispatch()
 {
     RESTORE_STACK_POINTER();
     RESTORE_SECOND_HALF_CONTEXT();
 
-    JUMP(thread_restore_first_half_dispatch_from_non_isr);
+    JUMP(thread_restore_first_half_dispatch);
 }
 
-// Must be jumped to
-__attribute__((naked))
-void thread_restore_first_half_dispatch_from_isr()
-{
-    RESTORE_FIRST_HALF_CONTEXT();
-
-    reti();
-}
-
-// Must be jumped to
-__attribute__((naked))
-void thread_restore_all_dispatch_from_isr()
-{
-    RESTORE_STACK_POINTER();
-    RESTORE_SECOND_HALF_CONTEXT();
-
-    JUMP(thread_restore_first_half_dispatch_from_isr);
-}
-
-void advance_thread_ticks()
+void advance_thread_ticks(void)
 {
     if (current_thread->ticks != 0xFF)
     {
@@ -423,21 +407,14 @@ ISR(TIMER0_COMPA_vect)
 {
     static object_id_t new_thread_id;
 
-    SAVE_FIRST_HALF_CONTEXT();
-    CLEAR_R1();
+    SAVE_FIRST_HALF_CONTEXT_ISR();
 
     advance_active_timers();
-
-    if (current_thread_id == THREAD_ID_KERNEL)
-    {
-        JUMP(thread_restore_first_half_dispatch_from_isr);
-    }
-
     advance_thread_ticks();
 
     if (!thread_select(&new_thread_id))
     {
-        JUMP(thread_restore_first_half_dispatch_from_isr);
+        JUMP(thread_restore_first_half_dispatch);
     }
 
     SAVE_SECOND_HALF_CONTEXT();
@@ -445,5 +422,5 @@ ISR(TIMER0_COMPA_vect)
 
     thread_change(new_thread_id);
 
-    JUMP(thread_restore_all_dispatch_from_isr);
+    JUMP(thread_restore_all_dispatch);
 }

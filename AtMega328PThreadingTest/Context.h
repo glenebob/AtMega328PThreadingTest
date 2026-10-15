@@ -24,8 +24,29 @@
         "push r31                 \n\t" \
     )
 
-#define CLEAR_R1() \
+#define SAVE_FIRST_HALF_CONTEXT_ISR() \
     asm volatile ( \
+        "push r0                  \n\t" \
+        "mov r0, r16              \n\t" \
+        "in r16, __SREG__         \n\t" \
+        "ori r16, 0x80            \n\t" \
+        "push r16                 \n\t" \
+        "mov r16, r0              \n\t" \
+        "push r1                  \n\t" \
+        "push r18                 \n\t" \
+        "push r19                 \n\t" \
+        "push r20                 \n\t" \
+        "push r21                 \n\t" \
+        "push r22                 \n\t" \
+        "push r23                 \n\t" \
+        "push r24                 \n\t" \
+        "push r25                 \n\t" \
+        "push r26                 \n\t" \
+        "push r27                 \n\t" \
+        "push r28                 \n\t" \
+        "push r29                 \n\t" \
+        "push r30                 \n\t" \
+        "push r31                 \n\t" \
         "clr r1                   \n\t" \
     )
 
@@ -112,4 +133,9 @@
     asm volatile ( \
         "jmp %x0 \n\t" \
         :: "i"(function) \
+    )
+
+#define RETURN() \
+    asm volatile ( \
+        "ret \n\t" \
     )

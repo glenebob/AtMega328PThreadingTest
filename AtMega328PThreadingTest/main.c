@@ -12,7 +12,7 @@
 #include <avr/pgmspace.h>
 
 #include "Types.h"
-#include "Interrupt.h"
+#include "Error.h"
 #include "Task.h"
 #include "Timer.h"
 #include "Thread.h"
@@ -43,7 +43,7 @@ void kernel_init_task(void *unused_arguments)
     sleep_enable();
 
     timers_initialize();
-    io_task_init();
+    io_task_initialize();
 
     thread_create(thread_root_entry, NULL, true);
 
@@ -55,11 +55,13 @@ void kernel_init_task(void *unused_arguments)
 
 void post_kernel_task(task_handler_t handler, void *arguments)
 {
-    INTERRUPT_RAISE_LEVEL();
+    cli();
 
     task_queue_push(handler, arguments);
     thread_queue(THREAD_ID_KERNEL);
     thread_yield_dispatch();
+
+    sei();
 }
 
 void thread_3_entry(void*);
@@ -284,7 +286,15 @@ void thread_5_entry(void *unused_arguments)
         while ((uint32_t) multiply3 > 500);
 
         mutex_lock(&io_mutex);
+        mutex_lock(&io_mutex);
+        mutex_lock(&io_mutex);
+        mutex_lock(&io_mutex);
+
         length = printf_P(string_iterations, "Thread 5", i, (uint32_t) 0, write_count, idle_spin_count);
+
+        mutex_unlock(&io_mutex);
+        mutex_unlock(&io_mutex);
+        mutex_unlock(&io_mutex);
         mutex_unlock(&io_mutex);
 
         write_count += length;
@@ -296,24 +306,27 @@ void thread_5_entry(void *unused_arguments)
 }
 
 __attribute__((OS_main))
-int main()
+int main(void)
 {
+    static const __flash char string_main[] PROGMEM = "Main!";
     static const __flash char string_kernel[] PROGMEM = "Kernel!";
 
     static volatile bool trueFlag = true;
 
     char status[sizeof(string_kernel) - 1];
 
-    memcpy_P(status, string_kernel, sizeof(status));
+    memcpy_P(status, string_main, sizeof(status) - 2);
 
-    interrupt_initialize();
     task_queue_initialize();
     threads_initialize();
+    // This is now the kernel thread.
+
+    memcpy_P(status, string_kernel, sizeof(status));
 
     // Queue up remaining initialization.
     task_queue_push(kernel_init_task, NULL);
 
-    INTERRUPT_LOWER_LEVEL();
+    sei();
 
     while (trueFlag)
     {
@@ -333,10 +346,12 @@ int main()
             memset(status, 0, sizeof(status));
         }
 
-        INTERRUPT_RAISE_LEVEL();
+        cli();
 
         thread_kernel_dormant();
         thread_yield_dispatch();
+
+        sei();
     }
 
     memset(status, 0, sizeof(status));
