@@ -213,6 +213,9 @@
     <Compile Include="Task.h">
       <SubType>compile</SubType>
     </Compile>
+    <Compile Include="TestApplication.c">
+      <SubType>compile</SubType>
+    </Compile>
     <Compile Include="Thread.c">
       <SubType>compile</SubType>
     </Compile>

@@ -37,6 +37,11 @@ void timers_initialize(void)
     {
         stack_push(&timer_free_list, &timer_id, sizeof(object_id_t));
     }
+
+    TCCR0A = (1 << WGM01);
+    OCR0A = 249;
+    TIMSK0 |= (1 << OCIE0A);
+    TCCR0B = (1 << CS01) | (1 << CS00);
 }
 
 uint8_t timer_add(uint8_t thread_id, uint16_t ticks)

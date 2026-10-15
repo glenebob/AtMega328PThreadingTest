@@ -1,0 +1,271 @@
+#include <stdint.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <math.h>
+
+#include <avr/pgmspace.h>
+
+#include "Types.h"
+#include "Error.h"
+#include "Thread.h"
+#include "AsyncIo.h"
+#include "Mutex.h"
+
+static const __flash char string_iterations[] PROGMEM = "%s: Iterations: %lu, Read: %lu, Write: %lu, Idle Spins: %lu\n";
+
+static const __flash char string_wheee[] PROGMEM =
+    "Begin big single write\r\n"
+    "Wheeeeeeeeeeeeeeeeeeeeeee"
+    "eeeeeeeeeeeeeeeeeeeeeeeee\r\n"
+    "eeeeeeeeeeeeeeeeeeeeeeeee"
+    "eeeeeeeeeeeeeeeeeeeeeeeee\r\n"
+    "eeeeeeeeeeeeeeeeeeeeeeeee"
+    "eeeeeeeeeeeeeeeeeeeeeeeee\r\n"
+    "eeeeeeeeeeeeeeeeeeeeeeeee"
+    "eeeeeeeeeeeeeeeeeeeeeeeee\r\n"
+    "End big single write\r\n";
+
+mutex_t io_mutex;
+
+void thread_3_entry(void*);
+void thread_4_entry(void*);
+void thread_5_entry(void*);
+
+__attribute__((OS_task))
+void thread_root_entry(void *unused_arguments)
+{
+    static const __flash char string_root[] PROGMEM = "Root!";
+
+    static volatile bool trueFlag = true;
+
+    char status[sizeof(string_root) - 1];
+
+    memcpy_P(status, string_root, sizeof(status));
+
+    memcpy_P(__malloc_heap_end - 12, PSTR("<malloc end>"), 12);
+
+    DDRB |= (1 << PB5);
+
+    io_task_initialize();
+    mutex_initialize(&io_mutex);
+
+    thread_create(thread_3_entry, NULL, true);
+    thread_create(thread_4_entry, NULL, true);
+
+    while (trueFlag)
+    {
+        thread_sleep(123);
+
+        PINB = (1 << PB5);
+    }
+
+    memset(status, 0, sizeof(status));
+}
+
+__attribute__((OS_task))
+void thread_3_entry(void *unused_arguments)
+{
+    static const __flash char string_thread_3[] PROGMEM = "Thread 3!";
+
+    static volatile bool trueFlag = true;
+
+    const size_t sizeof_status = sizeof(string_thread_3) - 1;
+
+    char status[sizeof_status];
+
+    memcpy_P(status, string_thread_3, sizeof_status);
+
+    thread_create(thread_5_entry, NULL, true);
+
+    while (trueFlag)
+    {
+        thread_sleep(150);
+
+        PINB = (1 << PB5);
+    }
+
+    memset(status, 0, sizeof_status);
+}
+
+void test_kernel_task(void *unused_arguments)
+{
+    uint32_t read_count = 0;
+    uint32_t write_count = 0;
+
+    write_count += printf_P(PSTR("Kernel Thread starting...\n"));
+
+    for (uint32_t i = 0; i < 5; ++i)
+    {
+        thread_sleep(250);
+
+        PINB = (1 << PB5);
+
+        write_count += printf_P(string_iterations, "Kernel Thread", i, read_count, write_count, idle_spin_count);
+    }
+
+    thread_sleep(250);
+
+    printf_P(PSTR("Kernel Thread exiting...\n"));
+}
+
+__attribute__((OS_task))
+void thread_4_entry(void *unused_arguments)
+{
+    static const __flash char string_thread_4[] PROGMEM = "Thread 4!";
+
+    static volatile bool trueFlag = true;
+
+    char status[sizeof(string_thread_4) - 1];
+
+    memcpy_P(status, string_thread_4, sizeof(status));
+
+    set_getchar_timeout(5000);
+
+    mutex_lock(&io_mutex);
+    printf("\n");
+
+    for (int i = 0; i < 60; ++i)
+    {
+        printf(".");
+        thread_sleep(5);
+    }
+
+    printf_P(PSTR(" Let's go!\n"));
+    mutex_unlock(&io_mutex);
+
+    thread_sleep(1000);
+
+    uint32_t read_count = 0;
+    uint32_t write_count = 0;
+    char line_buffer[16];
+    int length;
+
+    for (uint32_t i = 0; trueFlag; ++i)
+    {
+        if ((i % 9) == 0)
+        {
+            thread_sleep(1000);
+
+            mutex_lock(&io_mutex);
+            printf_P(PSTR("Allocate, copy, print, and free %u bytes...\n"), sizeof(string_wheee));
+
+            uint8_t *dynamic = malloc(sizeof(string_wheee));
+            mutex_unlock(&io_mutex);
+
+            if (!dynamic)
+            {
+                exit(ERR_MALLOC_FAILED);
+            }
+
+            memcpy_P(dynamic, string_wheee, sizeof(string_wheee));
+
+            mutex_lock(&io_mutex);
+            io_write(dynamic, (uint8_t) sizeof(string_wheee), 0);
+            mutex_unlock(&io_mutex);
+
+            memset(dynamic, '/', sizeof(string_wheee));
+
+            mutex_lock(&io_mutex);
+            free(dynamic);
+            mutex_unlock(&io_mutex);
+
+            thread_sleep(1000);
+
+            mutex_lock(&io_mutex);
+            printf_P(PSTR("Kernel task...\n"));
+            mutex_unlock(&io_mutex);
+
+            thread_post_kernel_task(test_kernel_task, NULL);
+
+            mutex_lock(&io_mutex);
+            printf_P(PSTR("That was fun.\n"));
+
+            length = printf_P(string_iterations, "Thread 4", i, read_count, write_count, idle_spin_count);
+
+            printf_P(PSTR("Now what say ye? >"));
+
+            if (fgets(line_buffer, sizeof(line_buffer), stdin) == NULL)
+            {
+                printf_P(PSTR("\n<read timeout>\n"));
+            }
+            else
+            {
+                length = strlen(line_buffer);
+                
+                read_count += length;
+
+                printf_P(PSTR("\nSaid ye: %s"), line_buffer);
+                
+                if (line_buffer[length - 1] != '\n')
+                {
+                    printf_P(PSTR(" <buffer overflow>\n"));
+                }
+            }
+
+            mutex_unlock(&io_mutex);
+
+            thread_sleep(1000);
+        }
+
+        mutex_lock(&io_mutex);
+        length = printf_P(string_iterations, "Thread 4", i, read_count, write_count, idle_spin_count);
+        mutex_unlock(&io_mutex);
+
+        write_count += length;
+
+        thread_sleep(250);
+    }
+
+    memset(status, 0, sizeof(status));
+}
+
+__attribute__((OS_task))
+void thread_5_entry(void *unused_arguments)
+{
+    static const __flash char string_thread_5[] PROGMEM = "Thread 5!";
+
+    static volatile bool trueFlag = true;
+
+    char status[sizeof(string_thread_5) - 1];
+
+    uint32_t write_count = 0;
+    int length;
+
+    memcpy_P(status, string_thread_5, sizeof(status));
+
+    int multiply1;
+    int multiply2;
+    int multiply3;
+
+    for (uint32_t i = 0; trueFlag; ++i)
+    {
+        do
+        {
+            multiply1 = rand();
+            multiply2 = rand();
+            multiply3 = multiply1 * multiply2;
+
+            thread_sleep(5);
+        }
+        while ((uint32_t) multiply3 > 500);
+
+        mutex_lock(&io_mutex);
+        mutex_lock(&io_mutex);
+        mutex_lock(&io_mutex);
+        mutex_lock(&io_mutex);
+
+        length = printf_P(string_iterations, "Thread 5", i, (uint32_t) 0, write_count, idle_spin_count);
+
+        mutex_unlock(&io_mutex);
+        mutex_unlock(&io_mutex);
+        mutex_unlock(&io_mutex);
+        mutex_unlock(&io_mutex);
+
+        write_count += length;
+
+        thread_sleep(250);
+    }
+
+    memset(status, 0, sizeof(status));
+}

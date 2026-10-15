@@ -5,6 +5,7 @@
 
 #include <avr/interrupt.h>
 #include <avr/pgmspace.h>
+#include <avr/sleep.h>
 
 #include "Types.h"
 #include "Error.h"
@@ -12,6 +13,7 @@
 #include "RingBuffer.h"
 #include "Timer.h"
 #include "Context.h"
+#include "Task.h"
 
 #include "Thread.h"
 
@@ -335,6 +337,64 @@ static void global_thread_entry(void)
 }
 
 __attribute__((OS_task))
+void thread_root_entry(void*);
+
+void kernel_init_task(void *unused_arguments)
+{
+    timers_initialize();
+    thread_create(thread_root_entry, NULL, true);
+}
+
+__attribute__((OS_main))
+void thread_kernel_entry(void *unused_arguments)
+{
+    static const __flash char string_kernel[] PROGMEM = "Kernel!";
+
+    static volatile bool trueFlag = true;
+
+    char status[sizeof(string_kernel) - 1];
+
+    memcpy_P(status, string_kernel, sizeof(status));
+
+    task_queue_initialize();
+
+    // Queue up remaining initialization.
+    task_queue_push(kernel_init_task, NULL);
+
+    sei();
+
+    while (trueFlag)
+    {
+        task_handler_t handler;
+        void *arguments;
+
+        while (task_queue_pop(&handler, &arguments))
+        {
+            static const __flash char string_kernel_task[] PROGMEM = "Kernel Task!";
+
+            char status[sizeof(string_kernel_task) - 1];
+
+            memcpy_P(status, string_kernel_task, sizeof(status));
+
+            handler(arguments);
+
+            memset(status, 0, sizeof(status));
+        }
+
+        cli();
+
+        thread_kernel_dormant();
+        thread_yield_dispatch();
+
+        sei();
+    }
+
+    memset(status, 0, sizeof(status));
+
+    abort();
+}
+
+__attribute__((OS_task))
 static void thread_idle_entry(void *unused_arguments)
 {
     static const __flash char string_idle[] PROGMEM = "Idle!";
@@ -344,6 +404,9 @@ static void thread_idle_entry(void *unused_arguments)
     char status[sizeof(string_idle) - 1];
 
     memcpy_P(status, string_idle, sizeof(status));
+
+    set_sleep_mode(SLEEP_MODE_IDLE);
+    sleep_enable();
 
     while (trueFlag)
     {
@@ -366,6 +429,17 @@ void thread_yield_dispatch()
     thread_select_and_change();
 
     JUMP(thread_restore_all_dispatch);
+}
+
+void thread_post_kernel_task(task_handler_t handler, void *arguments)
+{
+    cli();
+
+    task_queue_push(handler, arguments);
+    thread_queue(THREAD_ID_KERNEL);
+    thread_yield_dispatch();
+
+    sei();
 }
 
 // Must be jumped to

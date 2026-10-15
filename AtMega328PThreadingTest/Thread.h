@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Types.h"
+#include "Task.h"
 
 typedef void (*thread_entry_t)(void*);
 
@@ -46,5 +47,8 @@ bool thread_select(object_id_t *new_thread_id);
 void thread_select_and_change(void);
 void thread_change(object_id_t thread_id);
 void thread_yield_dispatch(void);
+void thread_post_kernel_task(task_handler_t handler, void *arguments);
 void thread_restore_first_half_dispatch(void);
 void thread_restore_all_dispatch(void);
+//__attribute__((OS_task))
+void thread_kernel_entry(void *arguments);
