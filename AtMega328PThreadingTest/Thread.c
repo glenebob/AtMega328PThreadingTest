@@ -7,6 +7,7 @@
 #include <avr/pgmspace.h>
 #include <avr/sleep.h>
 
+#include "TestApplication.h"
 #include "Types.h"
 #include "Error.h"
 #include "Stack.h"
@@ -21,7 +22,7 @@
 #define STACK_SIZE_IDLE 64
 #define STACK_SIZE_USER 256
 
-#define THREAD_USER_TICKS 2
+#define THREAD_USER_TICKS 10
 
 #define PRIORITY_COUNT 2
 
@@ -315,7 +316,7 @@ void thread_change(object_id_t thread_id)
 
     if (current_thread->ticks != 0xFF)
     {
-        current_thread->ticks = 10;
+        current_thread->ticks = THREAD_USER_TICKS;
     }
 }
 
@@ -356,6 +357,7 @@ void thread_kernel_entry(void *unused_arguments)
 
     memcpy_P(status, string_kernel, sizeof(status));
 
+    threads_initialize();
     task_queue_initialize();
 
     // Queue up remaining initialization.
@@ -413,7 +415,7 @@ static void thread_idle_entry(void *unused_arguments)
         cli();
         ++idle_spin_count;
         sei();
-        //        sleep_cpu();
+        sleep_cpu();
     }
 
     memset(status, 0, sizeof(status));

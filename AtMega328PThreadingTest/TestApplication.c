@@ -5,12 +5,14 @@
 #include <math.h>
 
 #include <avr/pgmspace.h>
+#include <avr/interrupt.h>
 
 #include "Types.h"
 #include "Error.h"
 #include "Thread.h"
 #include "AsyncIo.h"
 #include "Mutex.h"
+#include "Event.h"
 
 static const __flash char string_iterations[] PROGMEM = "%s: Iterations: %lu, Read: %lu, Write: %lu, Idle Spins: %lu\n";
 
@@ -27,6 +29,7 @@ static const __flash char string_wheee[] PROGMEM =
     "End big single write\r\n";
 
 mutex_t io_mutex;
+event_t test_event;
 
 void thread_3_entry(void*);
 void thread_4_entry(void*);
@@ -49,9 +52,22 @@ void thread_root_entry(void *unused_arguments)
 
     io_task_initialize();
     mutex_initialize(&io_mutex);
+    event_initialize(&test_event, EVENT_AUTO_RESET);
+
+    mutex_lock(&io_mutex);
+    printf("\n");
+    mutex_unlock(&io_mutex);
 
     thread_create(thread_3_entry, NULL, true);
     thread_create(thread_4_entry, NULL, true);
+
+    thread_sleep(500);
+
+    mutex_lock(&io_mutex);
+    printf_P(PSTR("Thread Root: Triggering event...\n"));
+    mutex_unlock(&io_mutex);
+
+    event_trigger(&test_event);
 
     while (trueFlag)
     {
@@ -76,7 +92,23 @@ void thread_3_entry(void *unused_arguments)
 
     memcpy_P(status, string_thread_3, sizeof_status);
 
+    mutex_lock(&io_mutex);
+    printf_P(PSTR("Thread 3: Waiting for event...\n"));
+    mutex_unlock(&io_mutex);
+
+    event_wait(&test_event);
+
+    mutex_lock(&io_mutex);
+    printf_P(PSTR("Thread 3: Event triggered!\n"));
+    mutex_unlock(&io_mutex);
+
     thread_create(thread_5_entry, NULL, true);
+
+    thread_sleep(1000);
+
+    while (current_thread_priority == 1);
+
+    event_trigger(&test_event);
 
     while (trueFlag)
     {
@@ -123,7 +155,13 @@ void thread_4_entry(void *unused_arguments)
     set_getchar_timeout(5000);
 
     mutex_lock(&io_mutex);
-    printf("\n");
+    printf_P(PSTR("Thread 4: Waiting for event...\n"));
+    mutex_unlock(&io_mutex);
+
+    event_wait(&test_event);
+
+    mutex_lock(&io_mutex);
+    printf_P(PSTR("Thread 4: Event triggered!\n"));
 
     for (int i = 0; i < 60; ++i)
     {
@@ -166,9 +204,9 @@ void thread_4_entry(void *unused_arguments)
 
             memset(dynamic, '/', sizeof(string_wheee));
 
-            mutex_lock(&io_mutex);
+            cli();
             free(dynamic);
-            mutex_unlock(&io_mutex);
+            sei();
 
             thread_sleep(1000);
 
@@ -206,6 +244,16 @@ void thread_4_entry(void *unused_arguments)
             mutex_unlock(&io_mutex);
 
             thread_sleep(1000);
+
+            mutex_lock(&io_mutex);
+            printf_P(PSTR("Thread 4: Waiting for event...\n"));
+            mutex_unlock(&io_mutex);
+
+            event_wait(&test_event);
+
+            mutex_lock(&io_mutex);
+            printf_P(PSTR("Thread 4: Event triggered!\n"));
+            mutex_unlock(&io_mutex);
         }
 
         mutex_lock(&io_mutex);
@@ -265,6 +313,12 @@ void thread_5_entry(void *unused_arguments)
         write_count += length;
 
         thread_sleep(250);
+
+        mutex_lock(&io_mutex);
+        printf_P(PSTR("Thread 5: Triggering event...\n"));
+        mutex_unlock(&io_mutex);
+
+        event_trigger(&test_event);
     }
 
     memset(status, 0, sizeof(status));

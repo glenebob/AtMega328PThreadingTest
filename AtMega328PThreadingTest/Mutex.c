@@ -7,12 +7,17 @@
 #include "Error.h"
 #include "RingBuffer.h"
 #include "Thread.h"
+#include "Context.h"
 
 #include "Mutex.h"
 
 void *mutex_create()
 {
+    cli();
+
     void *mutex_data = malloc(sizeof(mutex_t));
+
+    sei();
 
     if (!mutex_data)
     {
@@ -34,7 +39,11 @@ void mutex_initialize(void *mutex_data)
 
 void mutex_destroy(void *mutex_data)
 {
+    cli();
+
     free(mutex_data);
+
+    sei();
 }
 
 bool mutex_lock(void *mutex_data)
@@ -54,9 +63,7 @@ bool mutex_lock(void *mutex_data)
     }
     else if (mutex->thread_id == current_thread_id)
     {
-        ++mutex->use_count;
-
-        if (mutex->use_count == 0xFF)
+        if (!++mutex->use_count)
         {
             exit(ERR_MUTEX_USE_COUNT_OVERFLOW);
         }
@@ -94,7 +101,7 @@ bool mutex_unlock(void *mutex_data)
         return false;
     }
 
-    if (--mutex->use_count)
+    if (!mutex->use_count--)
     {
         sei();
 
@@ -116,17 +123,24 @@ bool mutex_unlock(void *mutex_data)
 
     thread_queue(mutex->thread_id);
 
-    object_id_t new_thread_id;
+    object_id_t thread_id;
 
-    if (!thread_select(&new_thread_id))
+    if (!thread_select(&thread_id))
     {
         sei();
 
         return true;
     }
 
-    thread_change(new_thread_id);
-    thread_yield_dispatch();
+    thread_block();
+
+    SAVE_FIRST_HALF_CONTEXT();
+    SAVE_SECOND_HALF_CONTEXT();
+    SAVE_STACK_POINTER();
+
+    thread_change(thread_id);
+
+    JUMP(thread_restore_all_dispatch);
 
     sei();
 

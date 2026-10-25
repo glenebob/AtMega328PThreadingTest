@@ -12,20 +12,19 @@ extern uint8_t _end;
 __attribute__((OS_main))
 int main(void)
 {
-    for (uint8_t *address = &_end; address <= 0x08FD; ++address)
+    for (uint8_t *address = &_end; address <= (uint8_t*) 0x08FD; ++address)
     {
         *address = 0;
     }
 
     static const __flash char string_main[] PROGMEM = "Main!";
 
-    static volatile bool trueFlag = true;
-
     char status[sizeof(string_main) - 1];
 
     memcpy_P(status, string_main, sizeof(status));
 
-    threads_initialize();
+    DDRB |= (1 << PB5);
+    PORTB &= ~(1 << PB5);
 
     JUMP(thread_kernel_entry);
 }

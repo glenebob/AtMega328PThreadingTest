@@ -1,5 +1,6 @@
 #pragma once
 
+#include "TestApplication.h"
 #include "Types.h"
 #include "Task.h"
 
@@ -22,15 +23,13 @@ typedef struct thread_t
 #define THREAD_ID_IDLE 1
 #define THREAD_ID_FIRST_USER 2
 
-#define THREAD_COUNT 6
-#define THREAD_USER_COUNT THREAD_COUNT - THREAD_ID_FIRST_USER
+#define THREAD_COUNT THREAD_USER_COUNT + 2
 
 extern uint16_t malloc_heap_size;
 
-extern uint8_t runnable_thread_count;
 extern uint8_t current_thread_id;
 extern thread_t *current_thread;
-extern bool kernel_thread_is_active;
+extern uint8_t current_thread_priority;
 
 extern volatile uint32_t idle_spin_count;
 

@@ -3,14 +3,13 @@
 
 #include <avr/interrupt.h>
 
+#include "TestApplication.h"
 #include "Types.h"
 #include "Error.h"
 #include "Stack.h"
 #include "RingBuffer.h"
 
 #include "Task.h"
-
-#define TASK_COUNT 5
 
 typedef struct
 {

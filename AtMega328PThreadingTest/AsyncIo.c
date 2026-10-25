@@ -16,8 +16,8 @@
 
 #include "AsyncIo.h"
 
-#define BAUD 9600
-//#define BAUD 62500
+//#define BAUD 9600
+#define BAUD 62500
 #define BAUDRATE ((F_CPU) / (BAUD * 16UL) -1)
 
 #define IO_INACTIVE 0
