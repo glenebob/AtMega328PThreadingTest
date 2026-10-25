@@ -204,9 +204,9 @@ void thread_4_entry(void *unused_arguments)
 
             memset(dynamic, '/', sizeof(string_wheee));
 
-            cli();
+            thread_lock();
             free(dynamic);
-            sei();
+            thread_unlock();
 
             thread_sleep(1000);
 

@@ -45,6 +45,7 @@ static thread_run_queue_t run_queues[PRIORITY_COUNT];
 uint8_t current_thread_id;
 thread_t *current_thread;
 uint8_t current_thread_priority;
+uint8_t thread_lock_count;
 
 volatile uint32_t idle_spin_count = 0;
 
@@ -55,6 +56,8 @@ extern uint8_t __data_start;
 extern uint8_t _end;
 
 uint16_t malloc_heap_size;
+
+static object_id_t new_thread_id;
 
 static void initialize_thread_stack(object_id_t thread_id, thread_t *thread);
 
@@ -123,6 +126,7 @@ void threads_initialize()
     current_thread_id = THREAD_ID_KERNEL;
     current_thread_priority = 0;
     current_thread = &threads[current_thread_id];
+    thread_lock_count = 0;
 }
 
 static void initialize_thread_stack(object_id_t thread_id, thread_t *thread)
@@ -189,6 +193,41 @@ object_id_t thread_create(thread_entry_t entry_point, void *argument, bool preem
     sei();
 
     return thread_id;
+}
+
+void thread_lock(void)
+{
+    cli();
+
+    if (!++thread_lock_count)
+    {
+        exit(ERR_THREAD_LOCK_COUNT_BAD_LEVEL);
+    }
+
+    sei();
+}
+
+void thread_unlock(void)
+{
+    cli();
+
+    if (!thread_lock_count--)
+    {
+        exit(ERR_THREAD_LOCK_COUNT_BAD_LEVEL);
+    }
+
+    if ((thread_lock_count || current_thread->ticks > 0) && thread_select())
+    {
+        SAVE_FIRST_HALF_CONTEXT_ISR();
+        SAVE_SECOND_HALF_CONTEXT();
+        SAVE_STACK_POINTER();
+
+        thread_change();
+
+        JUMP(thread_restore_all_dispatch);
+    }
+
+    sei();
 }
 
 void thread_block()
@@ -263,6 +302,11 @@ void thread_sleep(uint16_t milliseconds)
 
 	cli();
 
+    if (thread_lock_count)
+    {
+        exit(ERR_THREAD_LOCK_COUNT_BAD_LEVEL);
+    }
+
 	timer_add(current_thread_id, milliseconds);
     thread_block();
     thread_yield_dispatch();
@@ -270,14 +314,14 @@ void thread_sleep(uint16_t milliseconds)
     sei();
 }
 
-bool thread_select(object_id_t *new_thread_id)
+bool thread_select(void)
 {
-    *new_thread_id = THREAD_ID_IDLE;
+    new_thread_id = THREAD_ID_IDLE;
     current_thread_priority = 3;
 
     if (threads[THREAD_ID_KERNEL].status == THREAD_STATUS_RUNNABLE)
     {
-        *new_thread_id = THREAD_ID_KERNEL;
+        new_thread_id = THREAD_ID_KERNEL;
         current_thread_priority = 0;
     }
     else if (threads[THREAD_ID_KERNEL].status == THREAD_STATUS_DORMANT)
@@ -288,7 +332,7 @@ bool thread_select(object_id_t *new_thread_id)
 
             if (ring_buffer_peek(&run_queues[i], &thread_id, sizeof(object_id_t)))
             {
-                *new_thread_id = thread_id;
+                new_thread_id = thread_id;
                 current_thread_priority = i + 1;
 
                 break;
@@ -296,23 +340,21 @@ bool thread_select(object_id_t *new_thread_id)
         }
     }
 
-    return *new_thread_id != current_thread_id;
+    return !thread_lock_count && new_thread_id != current_thread_id;
 }
 
-void thread_select_and_change()
+void thread_select_and_change(void)
 {
-    object_id_t new_thread_id;
-
-    if (thread_select(&new_thread_id))
+    if (thread_select())
     {
-        thread_change(new_thread_id);
+        thread_change();
     }
 }
 
-void thread_change(object_id_t thread_id)
+void thread_change(void)
 {
-    current_thread_id = thread_id;
-    current_thread = &threads[thread_id];
+    current_thread_id = new_thread_id;
+    current_thread = &threads[current_thread_id];
 
     if (current_thread->ticks != 0xFF)
     {
@@ -337,7 +379,6 @@ static void global_thread_entry(void)
     JUMP(thread_restore_all_dispatch);
 }
 
-__attribute__((OS_task))
 void thread_root_entry(void*);
 
 void kernel_init_task(void *unused_arguments)
@@ -437,6 +478,11 @@ void thread_post_kernel_task(task_handler_t handler, void *arguments)
 {
     cli();
 
+    if (thread_lock_count)
+    {
+        exit(ERR_THREAD_LOCK_COUNT_BAD_LEVEL);
+    }
+
     task_queue_push(handler, arguments);
     thread_queue(THREAD_ID_KERNEL);
     thread_yield_dispatch();
@@ -481,14 +527,12 @@ void advance_thread_ticks(void)
 __attribute__((naked))
 ISR(TIMER0_COMPA_vect)
 {
-    static object_id_t new_thread_id;
-
     SAVE_FIRST_HALF_CONTEXT_ISR();
 
     advance_active_timers();
     advance_thread_ticks();
 
-    if (!thread_select(&new_thread_id))
+    if (!thread_select())
     {
         JUMP(thread_restore_first_half_dispatch);
     }
@@ -496,7 +540,7 @@ ISR(TIMER0_COMPA_vect)
     SAVE_SECOND_HALF_CONTEXT();
     SAVE_STACK_POINTER();
 
-    thread_change(new_thread_id);
+    thread_change();
 
     JUMP(thread_restore_all_dispatch);
 }

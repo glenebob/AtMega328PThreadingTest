@@ -13,11 +13,11 @@
 
 void *mutex_create()
 {
-    cli();
+    thread_lock();
 
     void *mutex_data = malloc(sizeof(mutex_t));
 
-    sei();
+    thread_unlock();
 
     if (!mutex_data)
     {
@@ -39,11 +39,11 @@ void mutex_initialize(void *mutex_data)
 
 void mutex_destroy(void *mutex_data)
 {
-    cli();
+    thread_lock();
 
     free(mutex_data);
 
-    sei();
+    thread_unlock();
 }
 
 bool mutex_lock(void *mutex_data)
@@ -51,6 +51,11 @@ bool mutex_lock(void *mutex_data)
     mutex_t *mutex = (mutex_t*) mutex_data;
 
     cli();
+
+    if (thread_lock_count)
+    {
+        exit(ERR_THREAD_LOCK_COUNT_BAD_LEVEL);
+    }
 
     if (mutex->thread_id == OBJECT_ID_INVALID)
     {
@@ -94,6 +99,11 @@ bool mutex_unlock(void *mutex_data)
 
     cli();
 
+    if (thread_lock_count)
+    {
+        exit(ERR_THREAD_LOCK_COUNT_BAD_LEVEL);
+    }
+
     if (mutex->thread_id != current_thread_id)
     {
         sei();
@@ -123,24 +133,18 @@ bool mutex_unlock(void *mutex_data)
 
     thread_queue(mutex->thread_id);
 
-    object_id_t thread_id;
-
-    if (!thread_select(&thread_id))
+    if (thread_select())
     {
-        sei();
+        thread_block();
 
-        return true;
+        SAVE_FIRST_HALF_CONTEXT();
+        SAVE_SECOND_HALF_CONTEXT();
+        SAVE_STACK_POINTER();
+
+        thread_change();
+
+        JUMP(thread_restore_all_dispatch);
     }
-
-    thread_block();
-
-    SAVE_FIRST_HALF_CONTEXT();
-    SAVE_SECOND_HALF_CONTEXT();
-    SAVE_STACK_POINTER();
-
-    thread_change(thread_id);
-
-    JUMP(thread_restore_all_dispatch);
 
     sei();
 

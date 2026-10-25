@@ -74,6 +74,11 @@ void io_crash_init(int(*put)(char, struct __file *))
 
 static int io_dispatch(uint16_t timeout)
 {
+    if (thread_lock_count)
+    {
+        exit(ERR_THREAD_LOCK_COUNT_BAD_LEVEL);
+    }
+
     io_task.thread_id = current_thread_id;
 
     if (timeout > 0)
@@ -221,8 +226,6 @@ void set_getchar_timeout(uint16_t timeout)
 __attribute__((naked))
 void io_interrupt_common(void)
 {
-    static object_id_t new_thread_id;
-
     io_task.status = IO_INACTIVE;
 
     if (io_task.timer_id != OBJECT_ID_INVALID)
@@ -232,7 +235,7 @@ void io_interrupt_common(void)
 
     thread_queue(io_task.thread_id);
 
-    if (!thread_select(&new_thread_id))
+    if (!thread_select())
     {
         JUMP(thread_restore_first_half_dispatch);
     }
@@ -240,7 +243,7 @@ void io_interrupt_common(void)
     SAVE_SECOND_HALF_CONTEXT();
     SAVE_STACK_POINTER();
 
-    thread_change(new_thread_id);
+    thread_change();
 
     JUMP(thread_restore_all_dispatch);
 }

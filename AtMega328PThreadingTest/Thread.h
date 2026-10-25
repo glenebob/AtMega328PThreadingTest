@@ -30,24 +30,26 @@ extern uint16_t malloc_heap_size;
 extern uint8_t current_thread_id;
 extern thread_t *current_thread;
 extern uint8_t current_thread_priority;
+extern uint8_t thread_lock_count;
 
 extern volatile uint32_t idle_spin_count;
 
 void threads_initialize(void);
 uint8_t thread_create_unlinked(thread_entry_t entry_point, void *argument, bool preemptable);
 uint8_t thread_create(thread_entry_t entry_point, void *argument, bool preemptable);
+void thread_lock(void);
+void thread_unlock(void);
 void thread_block(void);
 void thread_kernel_dormant(void);
 void thread_queue(object_id_t thread_id);
 void thread_requeue(void);
 void thread_destroy(object_id_t thread_id);
 void thread_sleep(uint16_t milliseconds);
-bool thread_select(object_id_t *new_thread_id);
+bool thread_select(void);
 void thread_select_and_change(void);
-void thread_change(object_id_t thread_id);
+void thread_change(void);
 void thread_yield_dispatch(void);
 void thread_post_kernel_task(task_handler_t handler, void *arguments);
 void thread_restore_first_half_dispatch(void);
 void thread_restore_all_dispatch(void);
-//__attribute__((OS_task))
 void thread_kernel_entry(void *arguments);

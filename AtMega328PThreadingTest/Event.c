@@ -13,11 +13,11 @@
 
 void *event_create(uint8_t flags)
 {
-    cli();
+    thread_lock();
 
     void *event_data = malloc(sizeof(event_t));
 
-    sei();
+    thread_unlock();
 
     if (!event_data)
     {
@@ -39,11 +39,11 @@ void event_initialize(void *event_data, uint8_t flags)
 
 void event_destroy(void *event_data)
 {
-    cli();
+    thread_lock();
 
     free(event_data);
 
-    sei();
+    thread_unlock();
 }
 
 bool event_wait(void *event_data)
@@ -51,6 +51,11 @@ bool event_wait(void *event_data)
     event_t *event = (event_t*) event_data;
 
     cli();
+
+    if (thread_lock_count)
+    {
+        exit(ERR_THREAD_LOCK_COUNT_BAD_LEVEL);
+    }
 
     if (event->flags & EVENT_TRIGGERED)
     {
@@ -85,6 +90,11 @@ void event_trigger(void *event_data)
 
     cli();
 
+    if (thread_lock_count)
+    {
+        exit(ERR_THREAD_LOCK_COUNT_BAD_LEVEL);
+    }
+
     if (event->flags & EVENT_TRIGGERED)
     {
         sei();
@@ -113,24 +123,20 @@ void event_trigger(void *event_data)
         thread_queue(thread_id);
     }    
 
-    if (!thread_select(&thread_id))
+    if (thread_select())
     {
-        sei();
-        
-        return;
+        thread_block();
+
+        SAVE_FIRST_HALF_CONTEXT();
+        SAVE_SECOND_HALF_CONTEXT();
+        SAVE_STACK_POINTER();
+
+        thread_change();
+
+        JUMP(thread_restore_all_dispatch);
     }
 
-    thread_block();
-
-    SAVE_FIRST_HALF_CONTEXT();
-    SAVE_SECOND_HALF_CONTEXT();
-    SAVE_STACK_POINTER();
-
-    thread_change(thread_id);
-
-    JUMP(thread_restore_all_dispatch);
-
     sei();
-        
+
     return;
 }
