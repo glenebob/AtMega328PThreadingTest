@@ -3,7 +3,7 @@
 #include "RingBuffer.h"
 #include "Thread.h"
 
-#define EVENT_WAIT_QUEUE_COUNT THREAD_USER_COUNT - 1
+#define EVENT_WAIT_QUEUE_COUNT THREAD_USER_COUNT
 
 #define EVENT_TRIGGERED 1
 #define EVENT_AUTO_RESET 2
@@ -25,3 +25,4 @@ void event_initialize(void *event_data, uint8_t flags);
 void event_destroy(void *event_data);
 bool event_wait(void *event_data);
 void event_trigger(void *event_data);
+void event_reset(void *event_data);

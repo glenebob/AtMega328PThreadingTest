@@ -19,12 +19,14 @@
 #include "Thread.h"
 
 #define STACK_SIZE_KERNEL 256
-#define STACK_SIZE_IDLE 64
+#define STACK_SIZE_IDLE 256
 #define STACK_SIZE_USER 256
 
 #define THREAD_USER_TICKS 10
 
-#define PRIORITY_COUNT 2
+#define PRIORITY_COUNT 4
+
+#define SAVED_REGISTER_BYTE_COUNT 32 + 1
 
 typedef struct
 {
@@ -32,19 +34,32 @@ typedef struct
     object_id_t threads[THREAD_USER_COUNT];
 } thread_free_list_t;
 
-typedef struct
+struct
+{
+    ring_buffer_header_t header;
+    object_id_t thread_id[1];
+} kernel_thread_run_queue;
+
+struct
 {
     ring_buffer_header_t header;
     object_id_t thread_id[THREAD_USER_COUNT];
-} thread_run_queue_t;
+} user_thread_run_queue_priority_1;
+
+struct
+{
+    ring_buffer_header_t header;
+    object_id_t thread_id[THREAD_USER_COUNT];
+} user_thread_run_queue_priority_2;
 
 static thread_t threads[THREAD_COUNT];
 static thread_free_list_t thread_free_list;
-static thread_run_queue_t run_queues[PRIORITY_COUNT];
+static void *run_queues[PRIORITY_COUNT - 1];
 
 uint8_t current_thread_id;
 thread_t *current_thread;
 uint8_t current_thread_priority;
+uint8_t current_thread_ticks;
 uint8_t thread_lock_count;
 
 volatile uint32_t idle_spin_count = 0;
@@ -58,6 +73,9 @@ extern uint8_t _end;
 uint16_t malloc_heap_size;
 
 static object_id_t new_thread_id;
+static object_id_t new_thread_priority;
+
+static task_queue_t kernel_task_queue;
 
 static void initialize_thread_stack(object_id_t thread_id, thread_t *thread);
 
@@ -71,7 +89,7 @@ void threads_initialize()
     uint16_t total_stacks_size = STACK_SIZE_KERNEL + STACK_SIZE_IDLE + ((THREAD_COUNT - 2) * STACK_SIZE_USER);
     int16_t heap_size = 2048 - total_data_bytes - total_stacks_size;
 
-    if (malloc_heap_size < 0)
+    if (heap_size < 0)
     {
         exit(ERR_THREAD_STACK_HEAP_COLLISION);
     }
@@ -88,10 +106,8 @@ void threads_initialize()
     thread_t *thread = &threads[thread_id];
 
     // Kernel thread - currently running
-    thread->status = THREAD_STATUS_RUNNABLE;
     thread->entry_point = (thread_entry_t) main;
     thread->argument = NULL;
-    thread->ticks = 0xFF;
 
     ++thread_id;
     thread = &threads[thread_id];
@@ -99,29 +115,26 @@ void threads_initialize()
     // Idle thread
     initialize_thread_stack(thread_id, thread);
 
-    thread->status = THREAD_STATUS_RUNNABLE;
     thread->entry_point = thread_idle_entry;
     thread->argument = NULL;
-    thread->ticks = 0xFF;
-
-    // User threads
-    for (++thread_id; thread_id < THREAD_COUNT; ++thread_id)
-    {
-        threads[thread_id].status = THREAD_STATUS_DORMANT;
-    }
 
     stack_initialize(&thread_free_list.header, THREAD_USER_COUNT);
 
-    for (int i = 0; i < PRIORITY_COUNT; ++i)
-    {
-        ring_buffer_initialize(&run_queues[i].header, THREAD_USER_COUNT);
-    }
+    run_queues[0] = &kernel_thread_run_queue;
+    run_queues[1] = &user_thread_run_queue_priority_1;
+    run_queues[2] = &user_thread_run_queue_priority_2;
+
+    ring_buffer_initialize(&kernel_thread_run_queue.header, 1);
+    ring_buffer_initialize(&user_thread_run_queue_priority_1.header, THREAD_USER_COUNT);
+    ring_buffer_initialize(&user_thread_run_queue_priority_2.header, THREAD_USER_COUNT);
 
     for (object_id_t thread_id = THREAD_COUNT - 1; thread_id >= THREAD_ID_FIRST_USER; --thread_id)
     {
-        threads[thread_id].status = THREAD_STATUS_DORMANT;
         stack_push(&thread_free_list, &thread_id, sizeof(object_id_t));
     }
+
+    thread_queue(THREAD_ID_KERNEL);
+    thread_queue(THREAD_ID_IDLE);
 
     current_thread_id = THREAD_ID_KERNEL;
     current_thread_priority = 0;
@@ -147,19 +160,19 @@ static void initialize_thread_stack(object_id_t thread_id, thread_t *thread)
 
     if (thread_id == THREAD_ID_IDLE)
     {
-        stack_init_block = (stack_init_block_t*) (0x8FF - STACK_SIZE_KERNEL - sizeof(stack_init_block_t) + 1);
+        stack_init_block = (stack_init_block_t*) (RAMEND - STACK_SIZE_KERNEL - sizeof(stack_init_block_t) + 1);
     }
     else
     {
-        stack_init_block = (stack_init_block_t*) (0x8FF - STACK_SIZE_KERNEL - STACK_SIZE_IDLE - (thread_id - 2) * STACK_SIZE_USER - sizeof(stack_init_block_t) + 1);
+        stack_init_block = (stack_init_block_t*) (RAMEND - STACK_SIZE_KERNEL - STACK_SIZE_IDLE - (thread_id - 2) * STACK_SIZE_USER - sizeof(stack_init_block_t) + 1);
     }
 
     stack_init_block->r1_register = 0;
-    stack_init_block->status_register = 0; //0x80;
+    stack_init_block->status_register = 0;
     stack_init_block->return_address.high = (uint16_t) global_thread_entry >> 8;
     stack_init_block->return_address.low = (uint16_t) global_thread_entry & 0xFF;
 
-    thread->saved_stack_pointer = (uint16_t) (((void*) stack_init_block) - sizeof(uint16_t*) - 29);
+    thread->saved_stack_pointer = (uint16_t) (((void*) stack_init_block) - sizeof(uint16_t*) - (SAVED_REGISTER_BYTE_COUNT - sizeof(stack_init_block_t)) - 1);
 }
 
 object_id_t thread_create(thread_entry_t entry_point, void *argument, bool preemptable)
@@ -181,11 +194,10 @@ object_id_t thread_create(thread_entry_t entry_point, void *argument, bool preem
 
     initialize_thread_stack(thread_id, thread);
 
-    thread->status = THREAD_STATUS_BLOCKED;
+    thread->status = preemptable ? THREAD_FLAG_PREEMPTABLE : 0;
     thread->entry_point = entry_point;
     thread->argument = argument;
-    thread->ticks = preemptable ? 0 : 0xFF;
-    
+
     cli();
 
     thread_queue(thread_id);
@@ -216,78 +228,52 @@ void thread_unlock(void)
         exit(ERR_THREAD_LOCK_COUNT_BAD_LEVEL);
     }
 
-    if ((thread_lock_count || current_thread->ticks > 0) && thread_select())
+    if (thread_lock_count || current_thread_ticks || !thread_select_if())
     {
-        SAVE_FIRST_HALF_CONTEXT_ISR();
-        SAVE_SECOND_HALF_CONTEXT();
-        SAVE_STACK_POINTER();
+        sei();
 
-        thread_change();
-
-        JUMP(thread_restore_all_dispatch);
+        return;
     }
+
+    thread_yield_dispatch();
 
     sei();
 }
 
-void thread_block()
+void thread_block_and_select(void)
 {
-    if (current_thread_priority == 0)
-    {
-        threads[THREAD_ID_KERNEL].status = THREAD_STATUS_BLOCKED;
-    }
-    else
-    {
-        object_id_t thread_id;
+    object_id_t thread_id;
 
-        ring_buffer_pop(&run_queues[current_thread_priority - 1], &thread_id, sizeof(object_id_t));
-        threads[thread_id].status = THREAD_STATUS_BLOCKED;
-    }
-}
-
-void thread_kernel_dormant()
-{
-    threads[THREAD_ID_KERNEL].status = THREAD_STATUS_DORMANT;
+    ring_buffer_pop(run_queues[current_thread_priority], &thread_id, sizeof(object_id_t));
+    thread_select();
 }
 
 // Must be called with interrupts disabled.
 void thread_queue(object_id_t thread_id)
 {
-    thread_t *thread = &threads[thread_id];
+    uint8_t priority;
 
-    thread->status = THREAD_STATUS_RUNNABLE;
-
-    if (thread_id != THREAD_ID_KERNEL)
+    switch (thread_id)
     {
-        ring_buffer_push(&run_queues[0], &thread_id, sizeof(object_id_t));
+        case THREAD_ID_KERNEL:
+            priority = 0;
+            break;
+
+        case THREAD_ID_IDLE:
+            return;
+
+       default:
+           priority = 1;
+           break;
     }
-}
 
-void thread_requeue()
-{
-    switch (current_thread_priority)
-    {
-    case 1:
-        {
-            object_id_t thread_id;
-
-            ring_buffer_pop(&run_queues[0], &thread_id, sizeof(object_id_t));
-            ring_buffer_push(&run_queues[1], &thread_id, sizeof(object_id_t));
-        }
-
-        break;
-    case 2:
-        ring_buffer_rotate(&run_queues[1], sizeof(object_id_t));
-
-        break;
-    }
+    ring_buffer_push(run_queues[priority], &thread_id, sizeof(object_id_t));
 }
 
 void thread_destroy(object_id_t thread_id)
 {
     cli();
 
-    threads[thread_id].status = THREAD_STATUS_DORMANT;
     stack_push(&thread_free_list, &thread_id, sizeof(object_id_t));
 
     sei();
@@ -308,57 +294,46 @@ void thread_sleep(uint16_t milliseconds)
     }
 
 	timer_add(current_thread_id, milliseconds);
-    thread_block();
+    thread_block_and_select();
     thread_yield_dispatch();
 
     sei();
 }
 
-bool thread_select(void)
+void thread_select(void)
 {
-    new_thread_id = THREAD_ID_IDLE;
-    current_thread_priority = 3;
+    uint8_t priority_count = PRIORITY_COUNT - 1;
 
-    if (threads[THREAD_ID_KERNEL].status == THREAD_STATUS_RUNNABLE)
+    for (uint8_t i = 0; i < priority_count; ++i)
     {
-        new_thread_id = THREAD_ID_KERNEL;
-        current_thread_priority = 0;
-    }
-    else if (threads[THREAD_ID_KERNEL].status == THREAD_STATUS_DORMANT)
-    {
-        for (uint8_t i = 0; i < PRIORITY_COUNT; ++i)
+        if (ring_buffer_peek(run_queues[i], &new_thread_id, sizeof(object_id_t)))
         {
-            object_id_t thread_id;
+            new_thread_priority = i;
 
-            if (ring_buffer_peek(&run_queues[i], &thread_id, sizeof(object_id_t)))
-            {
-                new_thread_id = thread_id;
-                current_thread_priority = i + 1;
-
-                break;
-            }
+            return;
         }
     }
 
-    return !thread_lock_count && new_thread_id != current_thread_id;
+    new_thread_id = THREAD_ID_IDLE;
+    new_thread_priority = priority_count;
 }
 
-void thread_select_and_change(void)
+bool thread_select_if(void)
 {
-    if (thread_select())
-    {
-        thread_change();
-    }
+    thread_select();
+
+    return !thread_lock_count && new_thread_id != current_thread_id;
 }
 
 void thread_change(void)
 {
     current_thread_id = new_thread_id;
     current_thread = &threads[current_thread_id];
+    current_thread_priority = new_thread_priority;
 
-    if (current_thread->ticks != 0xFF)
+    if (current_thread->status & THREAD_FLAG_PREEMPTABLE)
     {
-        current_thread->ticks = THREAD_USER_TICKS;
+        current_thread_ticks = THREAD_USER_TICKS;
     }
 }
 
@@ -371,24 +346,19 @@ static void global_thread_entry(void)
 
     cli();
 
-    thread_block();
+    thread_block_and_select();
     thread_destroy(current_thread_id);
-
-    thread_select_and_change();
-
-    JUMP(thread_restore_all_dispatch);
+    thread_yield_dispatch();
 }
 
-void thread_root_entry(void*);
-
-void kernel_init_task(void *unused_arguments)
+void kernel_init_task(void *root_thread_entry)
 {
     timers_initialize();
-    thread_create(thread_root_entry, NULL, true);
+    thread_create((thread_entry_t) root_thread_entry, NULL, true);
 }
 
-__attribute__((OS_main))
-void thread_kernel_entry(void *unused_arguments)
+__attribute__((OS_task))
+void thread_kernel_entry(thread_entry_t root_thread_entry)
 {
     static const __flash char string_kernel[] PROGMEM = "Kernel!";
 
@@ -399,42 +369,32 @@ void thread_kernel_entry(void *unused_arguments)
     memcpy_P(status, string_kernel, sizeof(status));
 
     threads_initialize();
-    task_queue_initialize();
-
-    // Queue up remaining initialization.
-    task_queue_push(kernel_init_task, NULL);
+    task_queue_initialize(&kernel_task_queue);
 
     sei();
+
+    // Queue up remaining initialization.
+    task_queue_push(&kernel_task_queue, kernel_init_task, root_thread_entry);
 
     while (trueFlag)
     {
         task_handler_t handler;
         void *arguments;
 
-        while (task_queue_pop(&handler, &arguments))
-        {
-            static const __flash char string_kernel_task[] PROGMEM = "Kernel Task!";
+        task_queue_pop(&kernel_task_queue, &handler, &arguments);
 
-            char status[sizeof(string_kernel_task) - 1];
+        static const __flash char string_kernel_task[] PROGMEM = "Kernel Task!";
 
-            memcpy_P(status, string_kernel_task, sizeof(status));
+        char status[sizeof(string_kernel_task) - 1];
 
-            handler(arguments);
+        memcpy_P(status, string_kernel_task, sizeof(status));
 
-            memset(status, 0, sizeof(status));
-        }
+        handler(arguments);
 
-        cli();
-
-        thread_kernel_dormant();
-        thread_yield_dispatch();
-
-        sei();
+        memset(status, 0, sizeof(status));
     }
 
     memset(status, 0, sizeof(status));
-
-    abort();
 }
 
 __attribute__((OS_task))
@@ -463,13 +423,13 @@ static void thread_idle_entry(void *unused_arguments)
 }
 
 __attribute__((naked))
-void thread_yield_dispatch()
+void thread_yield_dispatch(void)
 {
     SAVE_FIRST_HALF_CONTEXT();
     SAVE_SECOND_HALF_CONTEXT();
     SAVE_STACK_POINTER();
 
-    thread_select_and_change();
+    thread_change();
 
     JUMP(thread_restore_all_dispatch);
 }
@@ -483,9 +443,9 @@ void thread_post_kernel_task(task_handler_t handler, void *arguments)
         exit(ERR_THREAD_LOCK_COUNT_BAD_LEVEL);
     }
 
-    task_queue_push(handler, arguments);
-    thread_queue(THREAD_ID_KERNEL);
-    thread_yield_dispatch();
+    sei();
+
+    task_queue_push(&kernel_task_queue, handler, arguments);
 
     sei();
 }
@@ -510,17 +470,39 @@ void thread_restore_all_dispatch()
 
 void advance_thread_ticks(void)
 {
-    if (current_thread->ticks != 0xFF)
+    if (!(current_thread->status & THREAD_FLAG_PREEMPTABLE))
     {
-        if (current_thread->ticks)
-        {
-            --current_thread->ticks;
+        return;
+    }
 
-            if (!current_thread->ticks)
-            {
-                thread_requeue();
-            }
+    if (!current_thread_ticks)
+    {
+        return;
+    }
+
+    if (--current_thread_ticks)
+    {
+        return;
+    }
+
+    switch (current_thread_priority)
+    {
+        case 1:
+        {
+            object_id_t thread_id;
+
+            ring_buffer_pop(&user_thread_run_queue_priority_1, &thread_id, sizeof(object_id_t));
+            ring_buffer_push(&user_thread_run_queue_priority_2, &thread_id, sizeof(object_id_t));
+
+            current_thread_priority = 2;
+
+            break;
         }
+
+        case 2:
+            ring_buffer_rotate(&user_thread_run_queue_priority_2, sizeof(object_id_t));
+
+            break;
     }
 }
 
@@ -532,7 +514,7 @@ ISR(TIMER0_COMPA_vect)
     advance_active_timers();
     advance_thread_ticks();
 
-    if (!thread_select())
+    if (!thread_select_if())
     {
         JUMP(thread_restore_first_half_dispatch);
     }

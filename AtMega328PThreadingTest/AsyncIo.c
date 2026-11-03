@@ -17,7 +17,9 @@
 #include "AsyncIo.h"
 
 //#define BAUD 9600
-#define BAUD 62500
+//#define BAUD 62500
+//#define BAUD 125000
+#define BAUD 250000
 #define BAUDRATE ((F_CPU) / (BAUD * 16UL) -1)
 
 #define IO_INACTIVE 0
@@ -90,7 +92,7 @@ static int io_dispatch(uint16_t timeout)
         io_task.timer_id = OBJECT_ID_INVALID;
     }
 
-    thread_block();
+    thread_block_and_select();
     thread_yield_dispatch();
 
     int return_value = io_task.offset < io_task.buffer_length ? -1 : io_task.buffer_length;
@@ -235,7 +237,7 @@ void io_interrupt_common(void)
 
     thread_queue(io_task.thread_id);
 
-    if (!thread_select())
+    if (!thread_select_if())
     {
         JUMP(thread_restore_first_half_dispatch);
     }
