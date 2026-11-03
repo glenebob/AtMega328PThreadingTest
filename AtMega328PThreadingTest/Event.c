@@ -76,7 +76,7 @@ bool event_wait(void *event_data)
         return false;
     }
 
-    thread_block();
+    thread_block_and_select();
     thread_yield_dispatch();
 
     sei();
@@ -98,7 +98,7 @@ void event_trigger(void *event_data)
     if (event->flags & EVENT_TRIGGERED)
     {
         sei();
-        
+
         return;
     }
 
@@ -106,8 +106,10 @@ void event_trigger(void *event_data)
 
     if (!ring_buffer_pop(&event->waiters, &thread_id, sizeof(object_id_t)))
     {
-        sei();
+        event->flags |= EVENT_TRIGGERED;
         
+        sei();
+
         return;
     }
                 
@@ -123,20 +125,27 @@ void event_trigger(void *event_data)
         thread_queue(thread_id);
     }    
 
-    if (thread_select())
+    if (!thread_select_if())
     {
-        thread_block();
+        sei();
 
-        SAVE_FIRST_HALF_CONTEXT();
-        SAVE_SECOND_HALF_CONTEXT();
-        SAVE_STACK_POINTER();
-
-        thread_change();
-
-        JUMP(thread_restore_all_dispatch);
+        return;
     }
+
+    thread_yield_dispatch();
 
     sei();
 
     return;
+}
+
+void event_reset(void *event_data)
+{
+    cli();
+
+    event_t *event = (event_t*) event_data;
+
+    event->flags &= ~EVENT_TRIGGERED;
+
+    sei();
 }

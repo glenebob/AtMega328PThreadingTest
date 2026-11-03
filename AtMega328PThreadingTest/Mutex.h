@@ -3,7 +3,7 @@
 #include "RingBuffer.h"
 #include "Thread.h"
 
-#define MUTEX_WAIT_QUEUE_COUNT THREAD_USER_COUNT - 1
+#define MUTEX_WAIT_QUEUE_COUNT THREAD_USER_COUNT
 
 typedef struct
 {

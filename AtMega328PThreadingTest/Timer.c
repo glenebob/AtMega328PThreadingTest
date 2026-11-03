@@ -9,7 +9,7 @@
 #include "Stack.h"
 #include "LinkedList.h"
 
-#define TIMER_COUNT THREAD_USER_COUNT
+#define TIMER_COUNT THREAD_USER_COUNT + 1
 
 typedef struct
 {

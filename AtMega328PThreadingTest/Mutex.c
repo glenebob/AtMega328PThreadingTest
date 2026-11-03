@@ -85,7 +85,7 @@ bool mutex_lock(void *mutex_data)
         return false;
     }
 
-    thread_block();
+    thread_block_and_select();
     thread_yield_dispatch();
 
     sei();
@@ -111,14 +111,12 @@ bool mutex_unlock(void *mutex_data)
         return false;
     }
 
-    if (!mutex->use_count--)
+    if (--mutex->use_count)
     {
         sei();
 
         return true;
     }
-
-    mutex->thread_id = OBJECT_ID_INVALID;
 
     if (!ring_buffer_pop(&mutex->waiters, &mutex->thread_id, sizeof(object_id_t)))
     {
@@ -133,18 +131,14 @@ bool mutex_unlock(void *mutex_data)
 
     thread_queue(mutex->thread_id);
 
-    if (thread_select())
+    if (!thread_select_if())
     {
-        thread_block();
+        sei();
 
-        SAVE_FIRST_HALF_CONTEXT();
-        SAVE_SECOND_HALF_CONTEXT();
-        SAVE_STACK_POINTER();
-
-        thread_change();
-
-        JUMP(thread_restore_all_dispatch);
+        return true;
     }
+
+    thread_yield_dispatch();
 
     sei();
 
