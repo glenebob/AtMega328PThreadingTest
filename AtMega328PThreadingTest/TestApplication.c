@@ -4,19 +4,21 @@
 #include <string.h>
 #include <math.h>
 
+#include <avr/io.h>
 #include <avr/pgmspace.h>
 #include <avr/interrupt.h>
 
 #include "Types.h"
 #include "Error.h"
+#include "Bits.h"
 #include "Thread.h"
 #include "AsyncIo.h"
 #include "Mutex.h"
 #include "Event.h"
 
-static const __flash char string_iterations[] PROGMEM = "%s: Iterations: %lu, Read: %lu, Write: %lu, Idle Spins: %lu\n";
+static const __flash char string_iterations[] = "%s: Iterations: %lu, Read: %lu, Write: %lu, Idle Spins: %lu\n";
 
-static const __flash char string_wheee[] PROGMEM =
+static const __flash char string_wheee[] =
     "Begin big single write\r\n"
     "Wheeeeeeeeeeeeeeeeeeeeeee"
     "eeeeeeeeeeeeeeeeeeeeeeeee\r\n"
@@ -45,14 +47,14 @@ int main(void)
         *address = 0;
     }
 
-    static const __flash char string_main[] PROGMEM = "Main!";
+    static const __flash char string_main[] = "Main!";
 
     char status[sizeof(string_main) - 1];
 
     memcpy_P(status, string_main, sizeof(status));
 
-    DDRB |= (1 << PB5);
-    PORTB &= ~(1 << PB5);
+    DDRB |= BIT5;
+    PORTB &= ~BIT5;
 
     thread_kernel_entry(thread_root_entry);
 
@@ -62,7 +64,7 @@ int main(void)
 __attribute__((OS_task))
 void thread_root_entry(void *unused_arguments)
 {
-    static const __flash char string_root[] PROGMEM = "Root!";
+    static const __flash char string_root[] = "Root!";
 
     static volatile bool trueFlag = true;
 
@@ -71,8 +73,6 @@ void thread_root_entry(void *unused_arguments)
     memcpy_P(status, string_root, sizeof(status));
 
     memcpy_P(__malloc_heap_end - 12, PSTR("<malloc end>"), 12);
-
-    DDRB |= (1 << PB5);
 
     io_task_initialize();
     mutex_initialize(&io_mutex);
@@ -103,7 +103,7 @@ void thread_root_entry(void *unused_arguments)
     {
         thread_sleep(123);
 
-        PINB = (1 << PB5);
+        PINB = BIT5;
     }
 
     memset(status, 0, sizeof(status));
@@ -112,7 +112,7 @@ void thread_root_entry(void *unused_arguments)
 __attribute__((OS_task))
 void thread_3_entry(void *unused_arguments)
 {
-    static const __flash char string_thread_3[] PROGMEM = "Thread 3!";
+    static const __flash char string_thread_3[] = "Thread 3!";
 
     static volatile bool trueFlag = true;
 
@@ -148,7 +148,7 @@ void thread_3_entry(void *unused_arguments)
     {
         thread_sleep(150);
 
-        PINB = (1 << PB5);
+        PINB = BIT5;
     }
 
     memset(status, 0, sizeof_status);
@@ -167,7 +167,7 @@ void test_kernel_task(void *unused_arguments)
     {
         thread_sleep(250);
 
-        PINB = (1 << PB5);
+        PINB = BIT5;
 
         mutex_lock(&io_mutex);
         write_count += printf_P(string_iterations, "Kernel Task", i, read_count, write_count, idle_spin_count);
@@ -184,7 +184,7 @@ void test_kernel_task(void *unused_arguments)
 __attribute__((OS_task))
 void thread_4_entry(void *unused_arguments)
 {
-    static const __flash char string_thread_4[] PROGMEM = "Thread 4!";
+    static const __flash char string_thread_4[] = "Thread 4!";
 
     static volatile bool trueFlag = true;
 
@@ -302,7 +302,7 @@ static volatile uint32_t j;
 __attribute__((OS_task))
 void thread_5_entry(void *unused_arguments)
 {
-    static const __flash char string_thread_5[] PROGMEM = "Thread 5!";
+    static const __flash char string_thread_5[] = "Thread 5!";
 
     static volatile bool trueFlag = true;
 

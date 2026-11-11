@@ -69,9 +69,18 @@ void io_task_initialize()
 
 void io_crash_init(int(*put)(char, struct __file *))
 {
+    // Set baud rate
+    UBRR0H = (uint8_t) (BAUDRATE >> 8);
+    UBRR0L = (uint8_t) BAUDRATE;
+    // Set frame format: 8 data bits, 1 stop bit
+    UCSR0C = (1 << UCSZ01) | (1 << UCSZ00);
+    // Enable the transmitter only
     UCSR0B = (1 << TXEN0);
 
     fdev_setup_stream(&uart_stdout_err, put, NULL, _FDEV_SETUP_WRITE);
+
+    stdin = &uart_stdin;
+    stdout = &uart_stdout_err;
 }
 
 static int io_dispatch(uint16_t timeout)

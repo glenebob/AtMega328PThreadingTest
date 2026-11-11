@@ -57,6 +57,7 @@
     <com_atmel_avrdbg_tool_atmelice>
       <ToolOptions>
         <InterfaceProperties>
+          <IspClock>125000</IspClock>
         </InterfaceProperties>
         <InterfaceName>debugWIRE</InterfaceName>
       </ToolOptions>
@@ -88,6 +89,7 @@
       </ToolNumber>
       <ToolName>Custom Programming Tool</ToolName>
     </custom>
+    <avrtoolinterfaceclock>125000</avrtoolinterfaceclock>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
     <ToolchainSettings>
@@ -156,7 +158,7 @@
         <avrgcc.compiler.optimization.AllocateBytesNeededForEnum>True</avrgcc.compiler.optimization.AllocateBytesNeededForEnum>
         <avrgcc.compiler.optimization.DebugLevel>Maximum (-g3)</avrgcc.compiler.optimization.DebugLevel>
         <avrgcc.compiler.warnings.AllWarnings>True</avrgcc.compiler.warnings.AllWarnings>
-        <avrgcc.compiler.miscellaneous.OtherFlags>-std=gnu99 -Werror=implicit -Werror=incompatible-pointer-types -Wstrict-prototypes -Werror=strict-prototypes</avrgcc.compiler.miscellaneous.OtherFlags>
+        <avrgcc.compiler.miscellaneous.OtherFlags>-std=gnu99 -Werror=implicit -Werror=incompatible-pointer-types -Werror=strict-prototypes</avrgcc.compiler.miscellaneous.OtherFlags>
         <avrgcc.linker.libraries.Libraries>
           <ListValues>
             <Value>libm</Value>
@@ -175,6 +177,9 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="Abort.c">
+      <SubType>compile</SubType>
+    </Compile>
+    <Compile Include="Bits.h">
       <SubType>compile</SubType>
     </Compile>
     <Compile Include="Event.c">
