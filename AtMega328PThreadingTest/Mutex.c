@@ -78,7 +78,7 @@ bool mutex_lock(void *mutex_data)
         return true;
     }
 
-    if (!ring_buffer_push(&mutex->waiters, &current_thread_id, sizeof(current_thread_id)))
+    if (!ring_buffer_push(&mutex->waiters, &current_thread_id, sizeof(current_thread_id), false))
     {
         sei();
 

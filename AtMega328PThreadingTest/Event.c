@@ -69,7 +69,7 @@ bool event_wait(void *event_data)
         return true;
     }
 
-    if (!ring_buffer_push(&event->waiters, &current_thread_id, sizeof(current_thread_id)))
+    if (!ring_buffer_push(&event->waiters, &current_thread_id, sizeof(current_thread_id), false))
     {
         sei();
 

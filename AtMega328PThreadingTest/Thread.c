@@ -169,10 +169,10 @@ static void initialize_thread_stack(object_id_t thread_id, thread_t *thread)
 
     stack_init_block->r1_register = 0;
     stack_init_block->status_register = 0;
-    stack_init_block->return_address.high = (uint16_t) global_thread_entry >> 8;
-    stack_init_block->return_address.low = (uint16_t) global_thread_entry & 0xFF;
+    stack_init_block->return_address.high = (uint8_t) ((uintptr_t) global_thread_entry >> 8);
+    stack_init_block->return_address.low = (uint8_t) ((uintptr_t) global_thread_entry & 0xFF);
 
-    thread->saved_stack_pointer = (uint16_t) (((void*) stack_init_block) - sizeof(uint16_t*) - (SAVED_REGISTER_BYTE_COUNT - sizeof(stack_init_block_t)) - 1);
+    thread->saved_stack_pointer = (uint16_t) (((void*) stack_init_block) - sizeof(uintptr_t) - (SAVED_REGISTER_BYTE_COUNT - sizeof(stack_init_block_t)) - 1);
 }
 
 object_id_t thread_create(thread_entry_t entry_point, void *argument, bool preemptable)
@@ -267,7 +267,7 @@ void thread_queue(object_id_t thread_id)
            break;
     }
 
-    ring_buffer_push(run_queues[priority], &thread_id, sizeof(object_id_t));
+    ring_buffer_push(run_queues[priority], &thread_id, sizeof(object_id_t), false);
 }
 
 void thread_destroy(object_id_t thread_id)
@@ -302,20 +302,17 @@ void thread_sleep(uint16_t milliseconds)
 
 void thread_select(void)
 {
-    uint8_t priority_count = PRIORITY_COUNT - 1;
+    new_thread_priority = 0;
 
-    for (uint8_t i = 0; i < priority_count; ++i)
+    for (; new_thread_priority < PRIORITY_COUNT - 1; ++new_thread_priority)
     {
-        if (ring_buffer_peek(run_queues[i], &new_thread_id, sizeof(object_id_t)))
+        if (ring_buffer_peek(run_queues[new_thread_priority], &new_thread_id, 1))
         {
-            new_thread_priority = i;
-
             return;
         }
     }
 
     new_thread_id = THREAD_ID_IDLE;
-    new_thread_priority = priority_count;
 }
 
 bool thread_select_if(void)
@@ -335,6 +332,10 @@ void thread_change(void)
     {
         current_thread_ticks = THREAD_USER_TICKS;
     }
+    else
+    {
+        current_thread_ticks = 0;
+    }
 }
 
 __attribute__((naked))
@@ -351,7 +352,7 @@ static void global_thread_entry(void)
     thread_yield_dispatch();
 }
 
-void kernel_init_task(void *root_thread_entry)
+static void kernel_init_task(void *root_thread_entry)
 {
     timers_initialize();
     thread_create((thread_entry_t) root_thread_entry, NULL, true);
@@ -360,7 +361,7 @@ void kernel_init_task(void *root_thread_entry)
 __attribute__((OS_task))
 void thread_kernel_entry(thread_entry_t root_thread_entry)
 {
-    static const __flash char string_kernel[] PROGMEM = "Kernel!";
+    static const __flash char string_kernel[] = "Kernel!";
 
     static volatile bool trueFlag = true;
 
@@ -383,7 +384,7 @@ void thread_kernel_entry(thread_entry_t root_thread_entry)
 
         task_queue_pop(&kernel_task_queue, &handler, &arguments);
 
-        static const __flash char string_kernel_task[] PROGMEM = "Kernel Task!";
+        static const __flash char string_kernel_task[] = "Kernel Task!";
 
         char status[sizeof(string_kernel_task) - 1];
 
@@ -400,7 +401,7 @@ void thread_kernel_entry(thread_entry_t root_thread_entry)
 __attribute__((OS_task))
 static void thread_idle_entry(void *unused_arguments)
 {
-    static const __flash char string_idle[] PROGMEM = "Idle!";
+    static const __flash char string_idle[] = "Idle!";
 
     static volatile bool trueFlag = true;
 
@@ -468,13 +469,8 @@ void thread_restore_all_dispatch()
     JUMP(thread_restore_first_half_dispatch);
 }
 
-void advance_thread_ticks(void)
+static void advance_thread_ticks(void)
 {
-    if (!(current_thread->status & THREAD_FLAG_PREEMPTABLE))
-    {
-        return;
-    }
-
     if (!current_thread_ticks)
     {
         return;
@@ -492,7 +488,7 @@ void advance_thread_ticks(void)
             object_id_t thread_id;
 
             ring_buffer_pop(&user_thread_run_queue_priority_1, &thread_id, sizeof(object_id_t));
-            ring_buffer_push(&user_thread_run_queue_priority_2, &thread_id, sizeof(object_id_t));
+            ring_buffer_push(&user_thread_run_queue_priority_2, &thread_id, sizeof(object_id_t), false);
 
             current_thread_priority = 2;
 

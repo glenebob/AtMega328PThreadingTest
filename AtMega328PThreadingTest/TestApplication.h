@@ -1,2 +1,4 @@
+#pragma once
+
 #define THREAD_USER_COUNT 4
 #define TASK_COUNT 2
