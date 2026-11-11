@@ -73,7 +73,7 @@ bool task_queue_push(void *task_queue_data, task_handler_t handler, void *argume
     task_queue->tasks[task_id].handler = handler;
     task_queue->tasks[task_id].arguments = arguments;
 
-    ring_buffer_push(&task_queue->task_queue, &task_id, sizeof(object_id_t));
+    ring_buffer_push(&task_queue->task_queue, &task_id, sizeof(object_id_t), false);
 
     if (task_queue->waiting_thread_id == OBJECT_ID_INVALID)
     {
