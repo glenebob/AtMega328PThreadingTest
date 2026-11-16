@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
+#include <stddef.h>
 
 #include <avr/io.h>
 #include <avr/pgmspace.h>
@@ -12,9 +13,12 @@
 #include "Error.h"
 #include "Bits.h"
 #include "Thread.h"
-#include "AsyncIo.h"
+#include "UartDevice.h"
 #include "Mutex.h"
 #include "Event.h"
+#include "Io.h"
+#include "EepromDevice.h"
+#include "NullDevice.h"
 
 static const __flash char string_iterations[] = "%s: Iterations: %lu, Read: %lu, Write: %lu, Idle Spins: %lu\n";
 
@@ -22,10 +26,6 @@ static const __flash char string_wheee[] =
     "Begin big single write\r\n"
     "Wheeeeeeeeeeeeeeeeeeeeeee"
     "eeeeeeeeeeeeeeeeeeeeeeeee\r\n"
-    "eeeeeeeeeeeeeeeeeeeeeeeee"
-    "eeeeeeeeeeeeeeeeeeeeeeeee\r\n"
-    "eeeeeeeeeeeeeeeeeeeeeeeee"
-    "eeeeeeeeeeeeeeeeeeeeeeee!\r\n"
     "End big single write\r\n";
 
 mutex_t io_mutex;
@@ -74,9 +74,18 @@ void thread_root_entry(void *unused_arguments)
 
     memcpy_P(__malloc_heap_end - 12, PSTR("<malloc end>"), 12);
 
-    io_task_initialize();
+    null_device_initialize();
+    uart_initialize();
+    eeprom_initialize();
     mutex_initialize(&io_mutex);
     event_initialize(&test_event, EVENT_AUTO_RESET);
+
+    uint8_t buffer[5];
+
+    memset(buffer, 0xCC, sizeof(buffer));
+
+    fwrite(buffer, 1, 5, null_file);
+    fread(buffer, 1, 5, null_file);
 
     printf("\n");
 
@@ -231,7 +240,7 @@ void thread_4_entry(void *unused_arguments)
             memcpy_P(dynamic, string_wheee, sizeof(string_wheee));
 
             mutex_lock(&io_mutex);
-            io_write(dynamic, (uint8_t) sizeof(string_wheee), 0);
+            fwrite(dynamic, sizeof(uint8_t), sizeof(string_wheee), stdout);
             mutex_unlock(&io_mutex);
 
             memset(dynamic, '/', sizeof(string_wheee));
@@ -286,6 +295,11 @@ void thread_4_entry(void *unused_arguments)
         }
 
         mutex_lock(&io_mutex);
+        fprintf_P(eeprom_file, PSTR("%s: Iterations: %lu\n"), "Thread 4", i);
+        fseek(eeprom_file, 0, SEEK_SET);
+        mutex_unlock(&io_mutex);
+
+        mutex_lock(&io_mutex);
         length = printf_P(string_iterations, "Thread 4", i, read_count, write_count, idle_spin_count);
         mutex_unlock(&io_mutex);
 
@@ -310,6 +324,7 @@ void thread_5_entry(void *unused_arguments)
 
     uint32_t write_count = 0;
     int length;
+    char line_buffer[32];
 
     memcpy_P(status, string_thread_5, sizeof(status));
 
@@ -357,6 +372,12 @@ void thread_5_entry(void *unused_arguments)
         mutex_unlock(&io_mutex);
 
         event_trigger(&test_event);
+
+        mutex_lock(&io_mutex);
+        fgets(line_buffer, sizeof(line_buffer), eeprom_file);
+        fseek(eeprom_file, 0, SEEK_SET);
+        printf_P(PSTR("Thread 5: Read from eeprom: %s"), line_buffer);
+        mutex_unlock(&io_mutex);
     }
 
     memset(status, 0, sizeof(status));
