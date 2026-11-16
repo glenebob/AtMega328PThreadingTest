@@ -8,9 +8,7 @@
 
 #include "Error.h"
 #include "Bits.h"
-#include "AsyncIo.h"
-
-static int uart_putchar_spin(char c, FILE *stream);
+#include "UartDevice.h"
 
 __ATTR_NORETURN__
 void abort()
@@ -47,7 +45,7 @@ static void exit_safe(int status)
     DDRB |= BIT5;
     PORTB &= ~BIT5;
 
-    io_crash_init(uart_putchar_spin);
+    io_crash_init();
 
     uint8_t significantBitCount = (uint8_t) (16 - __builtin_clz((uint16_t) status));
 
@@ -90,23 +88,4 @@ static void exit_safe(int status)
 
         for (volatile uint32_t i = 0; i < bit_delays[1] * 2; ++i);
     }
-}
-
-static void io_write_spin(uint8_t b)
-{
-    while (!(UCSR0A & (1 << UDRE0)));
-
-    UDR0 = b;
-}
-
-static int uart_putchar_spin(char c, FILE *stream)
-{
-    if (c == '\n')
-    {
-        io_write_spin('\r');
-    }
-
-    io_write_spin(c);
-
-    return 0;
 }

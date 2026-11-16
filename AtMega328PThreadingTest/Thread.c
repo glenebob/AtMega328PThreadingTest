@@ -87,7 +87,7 @@ void threads_initialize()
     // the data segments.
     uint16_t total_data_bytes = (uint16_t) &_end - (uint16_t ) &__data_start;
     uint16_t total_stacks_size = STACK_SIZE_KERNEL + STACK_SIZE_IDLE + ((THREAD_COUNT - 2) * STACK_SIZE_USER);
-    int16_t heap_size = 2048 - total_data_bytes - total_stacks_size;
+    int16_t heap_size = RAMEND + 1 - RAMSTART - total_data_bytes - total_stacks_size;
 
     if (heap_size < 0)
     {
