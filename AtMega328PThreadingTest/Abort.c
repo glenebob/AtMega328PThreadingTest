@@ -9,6 +9,7 @@
 #include "Error.h"
 #include "Bits.h"
 #include "UartDevice.h"
+#include "File.h"
 
 __ATTR_NORETURN__
 void abort()
@@ -45,7 +46,8 @@ static void exit_safe(int status)
     DDRB |= BIT5;
     PORTB &= ~BIT5;
 
-    io_crash_init();
+    uart_crash_init(250000);
+    stdio_crash_init((device_t*) uart);
 
     uint8_t significantBitCount = (uint8_t) (16 - __builtin_clz((uint16_t) status));
 
@@ -61,7 +63,7 @@ static void exit_safe(int status)
 
     for (;;)
     {
-        printf_P(PSTR("exit(%d/0x%04X)\n"), status, status);
+        fprintf_P(stderr, PSTR("exit(%d/0x%04X)\n"), status, status);
 
         uint32_t bitDelay;
 

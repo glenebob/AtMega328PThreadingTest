@@ -4,6 +4,7 @@
 #include <avr/io.h>
 #include <avr/interrupt.h>
 #include <avr/eeprom.h>
+#include <avr/pgmspace.h>
 
 #include "Types.h"
 #include "Error.h"
@@ -16,49 +17,76 @@
 
 typedef struct
 {
-    uint8_t flags;
-    device_read_f read;
-    device_write_f write;
-    device_seek_f seek;
-    uint16_t position;
+    const __flash device_function_table_t *function_table;
+    uint8_t reference_count;
     io_task_t io_task;
 } eeprom_device_t;
 
-eeprom_device_t eeprom_device_struct;
-FILE eeprom_file_struct;
+static size_t eeprom_device_read(device_t *device, uint16_t offset, uint8_t *buffer, uint8_t count, uint16_t timeout);
+static size_t eeprom_device_write(device_t *device, uint16_t offset, const uint8_t *buffer, uint8_t count, uint16_t timeout);
+static void eeprom_device_info(device_t *device, uint8_t *flags, uint16_t *size);
+
+static const __flash device_function_table_t eeprom_device_function_table =
+{
+    .read = eeprom_device_read,
+    .write = eeprom_device_write,
+    .info = eeprom_device_info
+};
 
 device_t *eeprom_device;
-FILE *eeprom_file;
-
-static size_t eeprom_device_read(device_t *device, uint8_t *buffer, uint8_t count, uint16_t timeout);
-static size_t eeprom_device_write(device_t *device, const uint8_t *buffer, uint8_t count, uint16_t timeout);
-static bool eeprom_device_seek(device_t *device, int16_t offset, int8_t whence);
 
 void eeprom_initialize(void)
 {
-    eeprom_device_struct.flags = 0b00111001;
-    eeprom_device_struct.read = eeprom_device_read;
-    eeprom_device_struct.write = eeprom_device_write;
-    eeprom_device_struct.seek = eeprom_device_seek;
-    eeprom_device_struct.position = 0;
-    eeprom_device_struct.io_task.status = IO_INACTIVE;
+    thread_lock();
 
-    eeprom_device = (device_t*) &eeprom_device_struct;
+    if (!eeprom_device)
+    {
+        eeprom_device_t *new_eeprom_device = malloc(sizeof(eeprom_device_t));
 
-    fdev_setup_stream(&eeprom_file_struct, file_putchar, file_getchar, _FDEV_SETUP_RW | __SRD | __SWR);
+        if (!new_eeprom_device)
+        {
+            thread_unlock();
 
-    eeprom_file_struct.udata = eeprom_device;
+            return;
+        }
 
-    eeprom_file = &eeprom_file_struct;
+        new_eeprom_device->function_table = &eeprom_device_function_table;
+        new_eeprom_device->reference_count = 1;
+        new_eeprom_device->io_task.status = IO_INACTIVE;
+
+        eeprom_device = (device_t*) new_eeprom_device;
+    }
+    else
+    {
+        ++eeprom_device->reference_count;
+    }
+
+    thread_unlock();
 }
 
-static size_t eeprom_device_read(device_t *device_base, uint8_t *buffer, uint8_t count, uint16_t timeout)
+static void eeprom_device_info(device_t *device, uint8_t *flags, uint16_t *size)
+{
+    *flags = DEVICE_READ | DEVICE_WRITE | DEVICE_SEEK;
+    *size = EEPROM_LENGTH;
+}
+
+static size_t eeprom_device_read(device_t *device_base, uint16_t offset, uint8_t *buffer, uint8_t count, uint16_t timeout)
 {
     eeprom_device_t *device = (eeprom_device_t*) device_base;
 
     if (!device)
     {
         return -1;
+    }
+
+    if (offset > E2END)
+    {
+        return 0;
+    }
+
+    if (offset + count > EEPROM_LENGTH)
+    {
+        count = EEPROM_LENGTH - offset;
     }
 
     if (!count)
@@ -77,16 +105,11 @@ static size_t eeprom_device_read(device_t *device_base, uint8_t *buffer, uint8_t
 
     sei();
 
-    if (device->position + count > EEPROM_LENGTH)
-    {
-        return count = EEPROM_LENGTH - device->position;
-    }
-
     uint8_t remaining = count;
 
     while (remaining--)
     {
-        *(buffer++) = eeprom_read_byte((uint8_t*) device->position++);
+        *(buffer++) = eeprom_read_byte((uint8_t*) offset++);
     }
 
     cli();
@@ -98,13 +121,23 @@ static size_t eeprom_device_read(device_t *device_base, uint8_t *buffer, uint8_t
     return count;
 }
 
-static size_t eeprom_device_write(device_t *device_base, const uint8_t *buffer, uint8_t count, uint16_t timeout)
+static size_t eeprom_device_write(device_t *device_base, uint16_t offset, const uint8_t *buffer, uint8_t count, uint16_t timeout)
 {
     eeprom_device_t *device = (eeprom_device_t*) device_base;
 
     if (!device)
     {
         return -1;
+    }
+
+    if (offset > E2END)
+    {
+        return 0;
+    }
+
+    if (offset + count > EEPROM_LENGTH)
+    {
+        count = EEPROM_LENGTH - offset;
     }
 
     if (!count)
@@ -114,30 +147,31 @@ static size_t eeprom_device_write(device_t *device_base, const uint8_t *buffer, 
 
     cli();
 
-    if (eeprom_device_struct.io_task.status)
+    if (device->io_task.status)
     {
         exit(ERR_IO_WRITE_DUP);
     }
 
-    eeprom_device_struct.io_task.offset = 0;
+    device->io_task.device_offset = offset;
+    device->io_task.buffer_offset = 0;
 
     if (!(EECR & (1 << EEPE)))
     {
-        EEAR = (uint8_t) device->position;
+        EEAR = (uint8_t) offset;
         EECR |= (1 << EERE);
 
-        if (EEDR != buffer[device->io_task.offset])
+        if (EEDR != buffer[device->io_task.buffer_offset])
         {
-            EEDR = buffer[device->io_task.offset];
+            EEDR = buffer[device->io_task.buffer_offset];
 
             EECR |= (1 << EEMPE);
             EECR |= (1 << EEPE);
         }
 
-        ++device->position;
-        ++device->io_task.offset;
+        ++device->io_task.device_offset;
+        ++device->io_task.buffer_offset;
 
-        if (device->io_task.offset == count)
+        if (device->io_task.buffer_offset == count)
         {
             sei();
 
@@ -165,35 +199,37 @@ ISR(EE_READY_vect)
 {
     SAVE_FIRST_HALF_CONTEXT_ISR();
 
-    EEAR = (uint8_t) eeprom_device_struct.position;
+    eeprom_device_t *device = (eeprom_device_t*) eeprom_device;
+
+    EEAR = (uint8_t) device->io_task.device_offset;
     EECR |= (1 << EERE);
 
-    if (EEDR != eeprom_device_struct.io_task.buffer[eeprom_device_struct.io_task.offset])
+    if (EEDR != device->io_task.buffer[device->io_task.buffer_offset])
     {
-        EEDR = eeprom_device_struct.io_task.buffer[eeprom_device_struct.io_task.offset];
+        EEDR = device->io_task.buffer[device->io_task.buffer_offset];
 
         EECR |= (1 << EEMPE);
         EECR |= (1 << EEPE);
     }
 
-    ++eeprom_device_struct.position;
-    ++eeprom_device_struct.io_task.offset;
+    ++device->io_task.device_offset;
+    ++device->io_task.buffer_offset;
 
-    if (eeprom_device_struct.io_task.offset != eeprom_device_struct.io_task.buffer_length)
+    if (device->io_task.buffer_offset != device->io_task.buffer_length)
     {
         JUMP(thread_restore_first_half_dispatch);
     }
 
     EECR &= ~(1 << EERIE);
 
-    eeprom_device_struct.io_task.status = IO_INACTIVE;
+    device->io_task.status = IO_INACTIVE;
 
-    if (eeprom_device_struct.io_task.timer_id != OBJECT_ID_INVALID)
+    if (device->io_task.timer_id != OBJECT_ID_INVALID)
     {
-        timer_cancel(eeprom_device_struct.io_task.timer_id);
+        timer_cancel(device->io_task.timer_id);
     }
 
-    thread_queue(eeprom_device_struct.io_task.thread_id);
+    thread_queue(device->io_task.thread_id);
 
     if (!thread_select_if())
     {
@@ -206,62 +242,4 @@ ISR(EE_READY_vect)
     thread_change();
 
     JUMP(thread_restore_all_dispatch);
-}
-
-static bool eeprom_device_seek(device_t *device_base, int16_t offset, int8_t whence)
-{
-    eeprom_device_t *device = (eeprom_device_t*) device_base;
-
-    switch (whence)
-    {
-        case SEEK_SET:
-            if (offset < 0 || offset >= EEPROM_LENGTH)
-            {
-                return false;
-            }
-
-            break;
-
-        case SEEK_CUR:
-        {
-            offset = eeprom_device_struct.position + offset;
-
-            if (offset < 0)
-            {
-                return false;
-            }
-            else
-            {
-                if (offset >= EEPROM_LENGTH)
-                {
-                    return false;
-                }
-            }
-
-            break;
-        }
-
-        case SEEK_END:
-            if (offset > 0)
-            {
-                return false;
-            }
-
-            offset = EEPROM_LENGTH - offset - 1;
-
-            if (offset < 0)
-            {
-                return false;
-            }
-
-            break;
-    }
-
-    cli();
-
-    device->position = (uint16_t) offset;
-
-    sei();
-
-    return true;
 }
