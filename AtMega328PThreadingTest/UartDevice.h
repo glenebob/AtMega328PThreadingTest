@@ -4,8 +4,7 @@
 
 #include "Io.h"
 
-extern device_t *uart;
+extern const device_t *uart;
 
-void uart_initialize(void);
-void io_crash_init(void);
-void set_getchar_timeout(uint16_t timeout);
+void uart_initialize(uint32_t baud);
+void uart_crash_init(uint32_t baud);

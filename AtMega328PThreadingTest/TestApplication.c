@@ -19,6 +19,12 @@
 #include "Io.h"
 #include "EepromDevice.h"
 #include "NullDevice.h"
+#include "File.h"
+
+//#define BAUD 9600
+//#define BAUD 62500
+//#define BAUD 125000
+#define BAUD 250000
 
 static const __flash char string_iterations[] = "%s: Iterations: %lu, Read: %lu, Write: %lu, Idle Spins: %lu\n";
 
@@ -38,6 +44,10 @@ void thread_5_entry(void*);
 void test_kernel_task(void *unused_arguments);
 
 extern uint8_t _end;
+
+FILE *null_file;
+FILE *zero_file;
+FILE *eeprom_file;
 
 __attribute__((OS_main))
 int main(void)
@@ -74,18 +84,24 @@ void thread_root_entry(void *unused_arguments)
 
     memcpy_P(__malloc_heap_end - 12, PSTR("<malloc end>"), 12);
 
-    null_device_initialize();
-    uart_initialize();
+    uart_initialize(BAUD);
     eeprom_initialize();
     mutex_initialize(&io_mutex);
     event_initialize(&test_event, EVENT_AUTO_RESET);
 
-    uint8_t buffer[5];
+    stdio_initialize((device_t*) uart);
+    null_file = create_file((device_t*) null_device);
+    zero_file = create_file((device_t*) zero_device);
+    eeprom_file = create_file((device_t*) eeprom_device);
 
-    memset(buffer, 0xCC, sizeof(buffer));
+    fread(NULL, 1, 5, null_file);
+    fgetc(null_file);
+    fputc(5, null_file);
+    fgetc(zero_file);
+    fputc(5, zero_file);
 
-    fwrite(buffer, 1, 5, null_file);
-    fread(buffer, 1, 5, null_file);
+    fprintf_P(eeprom_file, PSTR("Here we go!\n"));
+    fseek(eeprom_file, 0, SEEK_SET);
 
     printf("\n");
 
@@ -201,7 +217,7 @@ void thread_4_entry(void *unused_arguments)
 
     memcpy_P(status, string_thread_4, sizeof(status));
 
-    set_getchar_timeout(5000);
+    stdin_set_getchar_timeout(5000);
 
     mutex_lock(&io_mutex);
     printf_P(PSTR("Thread 4: Waiting for event...\n"));
