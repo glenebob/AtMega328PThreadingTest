@@ -24,32 +24,59 @@ typedef struct
     io_task_t io_task;
 } eeprom_device_t;
 
-eeprom_device_t eeprom_device_struct;
-FILE eeprom_file_struct;
-
-device_t *eeprom_device;
-FILE *eeprom_file;
-
 static size_t eeprom_device_read(device_t *device, uint8_t *buffer, uint8_t count, uint16_t timeout);
 static size_t eeprom_device_write(device_t *device, const uint8_t *buffer, uint8_t count, uint16_t timeout);
 static bool eeprom_device_seek(device_t *device, int16_t offset, int8_t whence);
 
-void eeprom_initialize(void)
+static eeprom_device_t *eeprom_device;
+
+device_t *open_eeprom_device(void)
 {
-    eeprom_device_struct.flags = 0b00111001;
-    eeprom_device_struct.read = eeprom_device_read;
-    eeprom_device_struct.write = eeprom_device_write;
-    eeprom_device_struct.seek = eeprom_device_seek;
-    eeprom_device_struct.position = 0;
-    eeprom_device_struct.io_task.status = IO_INACTIVE;
+    cli();
 
-    eeprom_device = (device_t*) &eeprom_device_struct;
+    if (eeprom_device)
+    {
+        sei();
 
-    fdev_setup_stream(&eeprom_file_struct, file_putchar, file_getchar, _FDEV_SETUP_RW | __SRD | __SWR);
+        return NULL;
+    }
 
-    eeprom_file_struct.udata = eeprom_device;
+    thread_lock();
 
-    eeprom_file = &eeprom_file_struct;
+    eeprom_device_t *device = malloc(sizeof(eeprom_device_t));
+
+    thread_unlock();
+
+    device->flags = 0b00111001;
+    device->read = eeprom_device_read;
+    device->write = eeprom_device_write;
+    device->seek = eeprom_device_seek;
+    device->position = 0;
+    device->io_task.status = IO_INACTIVE;
+
+    eeprom_device = device;
+
+    return (device_t*) device;
+}
+
+FILE *open_eeprom_file(device_t *device)
+{
+    if (!device)
+    {
+        return NULL;
+    }
+
+    thread_lock();
+
+    FILE *file = malloc(sizeof(FILE));
+
+    thread_unlock();
+
+    fdev_setup_stream(file, file_putchar, file_getchar, _FDEV_SETUP_RW | __SMALLOC | __SRD | __SWR);
+
+    file->udata = device;
+
+    return file;
 }
 
 static size_t eeprom_device_read(device_t *device_base, uint8_t *buffer, uint8_t count, uint16_t timeout)
@@ -114,12 +141,12 @@ static size_t eeprom_device_write(device_t *device_base, const uint8_t *buffer, 
 
     cli();
 
-    if (eeprom_device_struct.io_task.status)
+    if (device->io_task.status)
     {
         exit(ERR_IO_WRITE_DUP);
     }
 
-    eeprom_device_struct.io_task.offset = 0;
+    device->io_task.offset = 0;
 
     if (!(EECR & (1 << EEPE)))
     {
@@ -165,35 +192,35 @@ ISR(EE_READY_vect)
 {
     SAVE_FIRST_HALF_CONTEXT_ISR();
 
-    EEAR = (uint8_t) eeprom_device_struct.position;
+    EEAR = (uint8_t) eeprom_device->position;
     EECR |= (1 << EERE);
 
-    if (EEDR != eeprom_device_struct.io_task.buffer[eeprom_device_struct.io_task.offset])
+    if (EEDR != eeprom_device->io_task.buffer[eeprom_device->io_task.offset])
     {
-        EEDR = eeprom_device_struct.io_task.buffer[eeprom_device_struct.io_task.offset];
+        EEDR = eeprom_device->io_task.buffer[eeprom_device->io_task.offset];
 
         EECR |= (1 << EEMPE);
         EECR |= (1 << EEPE);
     }
 
-    ++eeprom_device_struct.position;
-    ++eeprom_device_struct.io_task.offset;
+    ++eeprom_device->position;
+    ++eeprom_device->io_task.offset;
 
-    if (eeprom_device_struct.io_task.offset != eeprom_device_struct.io_task.buffer_length)
+    if (eeprom_device->io_task.offset != eeprom_device->io_task.buffer_length)
     {
         JUMP(thread_restore_first_half_dispatch);
     }
 
     EECR &= ~(1 << EERIE);
 
-    eeprom_device_struct.io_task.status = IO_INACTIVE;
+    eeprom_device->io_task.status = IO_INACTIVE;
 
-    if (eeprom_device_struct.io_task.timer_id != OBJECT_ID_INVALID)
+    if (eeprom_device->io_task.timer_id != OBJECT_ID_INVALID)
     {
-        timer_cancel(eeprom_device_struct.io_task.timer_id);
+        timer_cancel(eeprom_device->io_task.timer_id);
     }
 
-    thread_queue(eeprom_device_struct.io_task.thread_id);
+    thread_queue(eeprom_device->io_task.thread_id);
 
     if (!thread_select_if())
     {
@@ -224,7 +251,7 @@ static bool eeprom_device_seek(device_t *device_base, int16_t offset, int8_t whe
 
         case SEEK_CUR:
         {
-            offset = eeprom_device_struct.position + offset;
+            offset = device->position + offset;
 
             if (offset < 0)
             {

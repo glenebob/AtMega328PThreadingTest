@@ -39,6 +39,9 @@ void test_kernel_task(void *unused_arguments);
 
 extern uint8_t _end;
 
+device_t *eeprom_device;
+FILE *eeprom_file;
+
 __attribute__((OS_main))
 int main(void)
 {
@@ -76,16 +79,14 @@ void thread_root_entry(void *unused_arguments)
 
     null_device_initialize();
     uart_initialize();
-    eeprom_initialize();
+//    eeprom_initialize();
     mutex_initialize(&io_mutex);
     event_initialize(&test_event, EVENT_AUTO_RESET);
 
-    uint8_t buffer[5];
+    eeprom_device = open_eeprom_device();
+    eeprom_file = open_eeprom_file(eeprom_device);
 
-    memset(buffer, 0xCC, sizeof(buffer));
-
-    fwrite(buffer, 1, 5, null_file);
-    fread(buffer, 1, 5, null_file);
+    fputc(5, eeprom_file);
 
     printf("\n");
 
