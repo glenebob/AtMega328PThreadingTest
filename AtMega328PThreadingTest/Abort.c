@@ -6,6 +6,7 @@
 #include <avr/interrupt.h>
 #include <avr/pgmspace.h>
 
+#include "TestApplication.h"
 #include "Error.h"
 #include "Bits.h"
 #include "UartDevice.h"
@@ -46,7 +47,7 @@ static void exit_safe(int status)
     DDRB |= BIT5;
     PORTB &= ~BIT5;
 
-    uart_crash_init(250000);
+    uart_crash_init(UART_BAUD, UART_FLAGS);
     stdio_crash_init((device_t*) uart);
 
     uint8_t significantBitCount = (uint8_t) (16 - __builtin_clz((uint16_t) status));
