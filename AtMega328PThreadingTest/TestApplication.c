@@ -21,11 +21,6 @@
 #include "NullDevice.h"
 #include "File.h"
 
-//#define BAUD 9600
-//#define BAUD 62500
-//#define BAUD 125000
-#define BAUD 250000
-
 static const __flash char string_iterations[] = "%s: Iterations: %lu, Read: %lu, Write: %lu, Idle Spins: %lu\n";
 
 static const __flash char string_wheee[] =
@@ -84,7 +79,7 @@ void thread_root_entry(void *unused_arguments)
 
     memcpy_P(__malloc_heap_end - 12, PSTR("<malloc end>"), 12);
 
-    uart_initialize(BAUD);
+    uart_initialize(UART_BAUD, UART_FLAGS);
     eeprom_initialize();
     mutex_initialize(&io_mutex);
     event_initialize(&test_event, EVENT_AUTO_RESET);

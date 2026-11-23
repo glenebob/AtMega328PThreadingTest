@@ -22,7 +22,7 @@ typedef struct
     const __flash device_function_table_t *function_table;
     uint8_t reference_count;
     io_task_t io_task;
-    bool extra_byte_written;
+    uint8_t flags;
 } uart_device_t;
 
 static size_t uart_device_read(device_t *device, uint16_t offset, uint8_t *buffer, uint8_t count, uint16_t timeout);
@@ -53,7 +53,7 @@ static uint16_t calculate_baud_rate(uint32_t baud)
     return (uint16_t) ((F_CPU) / (baud * 16UL) -1);
 }
 
-void uart_initialize(uint32_t baud)
+void uart_initialize(uint32_t baud, uint8_t flags)
 {
     uint16_t baud_rate = calculate_baud_rate(baud);
 
@@ -67,11 +67,12 @@ void uart_initialize(uint32_t baud)
 
     uart_device.function_table = &uart_device_function_table;
     uart_device.io_task.status = IO_INACTIVE;
+    uart_device.flags = flags;
 
     uart = (device_t*) &uart_device;
 };
 
-void uart_crash_init(uint32_t baud)
+void uart_crash_init(uint32_t baud, uint8_t flags)
 {
     uint16_t baud_rate = calculate_baud_rate(baud);
 
@@ -85,6 +86,7 @@ void uart_crash_init(uint32_t baud)
 
     uart_device.function_table = &uart_device_function_table_spin;
     uart_device.io_task.status = IO_INACTIVE;
+    uart_device.flags = flags;
 }
 
 void uart_device_info(device_t *device, uint8_t *flags, uint16_t *size)
@@ -126,8 +128,15 @@ static size_t uart_device_read(device_t *device_base, uint16_t offset, uint8_t *
     {
         uint8_t b = UDR0;
 
-        // PuTTY hack. This silly behavior needs to be configurable on the device.
-        buffer[device->io_task.buffer_offset++] = (b == 0x0D ? 0x0A : b);
+        if (b == 0x0D)
+        {
+            if (!device->flags & UART_RAW)
+            {
+                b = 0x0A;
+            }
+        }
+
+        buffer[device->io_task.buffer_offset++] = b;
 
         if (device->io_task.buffer_offset == count)
         {
@@ -174,19 +183,10 @@ static size_t uart_device_write(device_t *device_base, uint16_t offset, const ui
     }
 
     device->io_task.buffer_offset = 0;
-    device->extra_byte_written = false;
 
     if (UCSR0A & (1 << UDRE0))
     {
-        if (buffer[device->io_task.buffer_offset] == 0x0A)
-        {
-            UDR0 = 0x0D;
-            device->extra_byte_written = true;
-        }
-        else
-        {
-            UDR0 = buffer[device->io_task.buffer_offset++];
-        }
+        UDR0 = buffer[device->io_task.buffer_offset++];
         
         if (device->io_task.buffer_offset == count)
         {
@@ -272,8 +272,15 @@ ISR(USART_RX_vect)
 
     uint8_t b = UDR0;
 
-    // PuTTY hack. This silly behavior needs to be configurable on the device.
-    uart_device.io_task.buffer[uart_device.io_task.buffer_offset++] = (b == 0x0D ? 0x0A : b);
+    if (b == 0x0D)
+    {
+        if (!uart_device.flags & UART_RAW)
+        {
+            b = 0x0A;
+        }
+    }
+
+    uart_device.io_task.buffer[uart_device.io_task.buffer_offset++] = b;
 
     if (uart_device.io_task.buffer_offset != uart_device.io_task.buffer_length)
     {
@@ -290,23 +297,7 @@ ISR(USART_UDRE_vect)
 {
     SAVE_FIRST_HALF_CONTEXT_ISR();
 
-    if (uart_device.io_task.buffer[uart_device.io_task.buffer_offset] == 0x0A)
-    {
-        if (uart_device.extra_byte_written)
-        {
-            UDR0 = uart_device.io_task.buffer[uart_device.io_task.buffer_offset++];
-            uart_device.extra_byte_written = false;
-        }
-        else
-        {
-            UDR0 = 0x0D;
-            uart_device.extra_byte_written = true;
-        }
-    }
-    else
-    {
-        UDR0 = uart_device.io_task.buffer[uart_device.io_task.buffer_offset++];
-    }
+    UDR0 = uart_device.io_task.buffer[uart_device.io_task.buffer_offset++];
 
     if (uart_device.io_task.buffer_offset != uart_device.io_task.buffer_length)
     {
