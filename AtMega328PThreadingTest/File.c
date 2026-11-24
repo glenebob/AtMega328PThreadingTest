@@ -29,7 +29,7 @@ typedef struct {
     char	*buf;		/* buffer pointer */
     unsigned char unget;	/* ungetc() buffer */
     uint8_t	flags;		/* flags, see below */
-    int	size;		/* size of buffer */
+    uint16_t	size;		/* size of buffer */
     int	len;		/* characters read or written so far */
     int	(*put)(char, struct __file *);	/* function to write one char to device */
     int	(*get)(struct __file *);	/* function to read one char from device */

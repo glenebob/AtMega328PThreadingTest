@@ -24,7 +24,7 @@ typedef struct
 
 static size_t eeprom_device_read(device_t *device, uint16_t offset, uint8_t *buffer, uint8_t count, uint16_t timeout);
 static size_t eeprom_device_write(device_t *device, uint16_t offset, const uint8_t *buffer, uint8_t count, uint16_t timeout);
-static void eeprom_device_info(device_t *device, uint8_t *flags, uint16_t *size);
+static bool eeprom_device_info(device_t *device, uint8_t *flags, uint16_t *size);
 
 static const __flash device_function_table_t eeprom_device_function_table =
 {
@@ -64,10 +64,17 @@ void eeprom_initialize(void)
     thread_unlock();
 }
 
-static void eeprom_device_info(device_t *device, uint8_t *flags, uint16_t *size)
+static bool eeprom_device_info(device_t *device, uint8_t *flags, uint16_t *size)
 {
+    if (!device)
+    {
+        return false;
+    }
+
     *flags = DEVICE_READ | DEVICE_WRITE | DEVICE_SEEK;
     *size = EEPROM_LENGTH;
+
+    return true;
 }
 
 static size_t eeprom_device_read(device_t *device_base, uint16_t offset, uint8_t *buffer, uint8_t count, uint16_t timeout)

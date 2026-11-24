@@ -182,6 +182,12 @@
     <Compile Include="Bits.h">
       <SubType>compile</SubType>
     </Compile>
+    <Compile Include="FlashDevice.c">
+      <SubType>compile</SubType>
+    </Compile>
+    <Compile Include="FlashDevice.h">
+      <SubType>compile</SubType>
+    </Compile>
     <Compile Include="Math.h">
       <SubType>compile</SubType>
     </Compile>

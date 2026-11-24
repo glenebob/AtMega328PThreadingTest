@@ -48,7 +48,7 @@ static void exit_safe(int status)
     PORTB &= ~BIT5;
 
     uart_crash_init(UART_BAUD, UART_FLAGS);
-    stdio_crash_init((device_t*) uart);
+    stdio_crash_init((device_t*) uart_device);
 
     uint8_t significantBitCount = (uint8_t) (16 - __builtin_clz((uint16_t) status));
 
