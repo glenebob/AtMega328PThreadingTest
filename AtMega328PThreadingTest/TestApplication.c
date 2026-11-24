@@ -12,6 +12,7 @@
 #include "Types.h"
 #include "Error.h"
 #include "Bits.h"
+#include "Math.h"
 #include "Thread.h"
 #include "UartDevice.h"
 #include "Mutex.h"
@@ -19,15 +20,15 @@
 #include "Io.h"
 #include "EepromDevice.h"
 #include "NullDevice.h"
+#include "FlashDevice.h"
 #include "File.h"
 
 static const __flash char string_iterations[] = "%s: Iterations: %lu, Read: %lu, Write: %lu, Idle Spins: %lu\n";
 
 static const __flash char string_wheee[] =
-    "Begin big single write\r\n"
-    "Wheeeeeeeeeeeeeeeeeeeeeee"
-    "eeeeeeeeeeeeeeeeeeeeeeeee\r\n"
-    "End big single write\r\n";
+    "Begin big single write\n"
+    "Wheeeeeeeeeeeeeeeeeeeeee!\n"
+    "End big single write\n";
 
 mutex_t io_mutex;
 event_t test_event;
@@ -43,6 +44,7 @@ extern uint8_t _end;
 FILE *null_file;
 FILE *zero_file;
 FILE *eeprom_file;
+FILE *flash_file;
 
 __attribute__((OS_main))
 int main(void)
@@ -84,12 +86,12 @@ void thread_root_entry(void *unused_arguments)
     mutex_initialize(&io_mutex);
     event_initialize(&test_event, EVENT_AUTO_RESET);
 
-    stdio_initialize((device_t*) uart);
+    stdio_initialize((device_t*) uart_device);
     null_file = create_file((device_t*) null_device);
     zero_file = create_file((device_t*) zero_device);
-    eeprom_file = create_file((device_t*) eeprom_device);
+    eeprom_file = create_file(eeprom_device);
+    flash_file = create_file((device_t*) flash_device);
 
-    fread(NULL, 1, 5, null_file);
     fgetc(null_file);
     fputc(5, null_file);
     fgetc(zero_file);
@@ -97,6 +99,21 @@ void thread_root_entry(void *unused_arguments)
 
     fprintf_P(eeprom_file, PSTR("Here we go!\n"));
     fseek(eeprom_file, 0, SEEK_SET);
+
+    thread_lock();
+    uint8_t *buffer = malloc(32);
+    uint16_t remaining = 0x8000;
+    thread_unlock();
+
+    while (remaining)
+    {
+        uint16_t bytes_read = fread(buffer, 1, min_size(32, remaining), flash_file);
+        remaining -= bytes_read;
+    }
+
+    thread_lock();
+    free(buffer);
+    thread_unlock();
 
     printf("\n");
 

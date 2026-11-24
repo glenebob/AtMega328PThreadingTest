@@ -13,7 +13,7 @@ typedef struct device_s device_t;
 
 typedef size_t (*device_read_f)(device_t *device, uint16_t offset, uint8_t *buffer, uint8_t count, uint16_t timeout);
 typedef size_t (*device_write_f)(device_t *device, uint16_t offset, const uint8_t *buffer, uint8_t count, uint16_t timeout);
-typedef void (*device_info_f)(device_t *device, uint8_t *flags, uint16_t *size);
+typedef bool (*device_info_f)(device_t *device, uint8_t *flags, uint16_t *size);
 
 typedef struct
 {
