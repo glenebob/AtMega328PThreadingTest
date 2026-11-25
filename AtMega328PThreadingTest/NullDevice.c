@@ -14,6 +14,8 @@ static bool null_zero_device_info(device_t *device, uint8_t *flags, uint16_t *si
 
 static const __flash device_function_table_t null_device_function_table =
 {
+    .open = NULL,
+    .close = NULL,
     .read = null_device_read,
     .write = null_zero_device_write,
     .info = null_zero_device_info
@@ -21,6 +23,8 @@ static const __flash device_function_table_t null_device_function_table =
 
 static const __flash device_function_table_t zero_device_function_table =
 {
+    .open = NULL,
+    .close = NULL,
     .read = zero_device_read,
     .write = null_zero_device_write,
     .info = null_zero_device_info

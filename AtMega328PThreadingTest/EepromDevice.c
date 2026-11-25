@@ -17,48 +17,86 @@
 
 typedef struct
 {
-    const __flash device_function_table_t *function_table;
     uint8_t reference_count;
     io_task_t io_task;
+} eeprom_device_instance_t;
+
+typedef struct
+{
+    const __flash device_function_table_t *function_table;
+    eeprom_device_instance_t *instance;
 } eeprom_device_t;
 
+static device_t *eeprom_device_open(device_t *device);
+static void eeprom_device_close(device_t *device);
 static size_t eeprom_device_read(device_t *device, uint16_t offset, uint8_t *buffer, uint8_t count, uint16_t timeout);
 static size_t eeprom_device_write(device_t *device, uint16_t offset, const uint8_t *buffer, uint8_t count, uint16_t timeout);
 static bool eeprom_device_info(device_t *device, uint8_t *flags, uint16_t *size);
 
 static const __flash device_function_table_t eeprom_device_function_table =
 {
+    .open = eeprom_device_open,
+    .close = eeprom_device_close,
     .read = eeprom_device_read,
     .write = eeprom_device_write,
-    .info = eeprom_device_info
+    .info = eeprom_device_info,
 };
 
-device_t *eeprom_device;
-
-void eeprom_initialize(void)
+eeprom_device_t eeprom_device_struct =
 {
+    .function_table = &eeprom_device_function_table,
+    .instance = NULL
+};
+
+const device_t *eeprom_device = (device_t*) &eeprom_device_struct;
+
+static device_t *eeprom_device_open(device_t *device_base)
+{
+    eeprom_device_t *device = (eeprom_device_t*) device_base;
+
     thread_lock();
 
-    if (!eeprom_device)
+    if (!device->instance)
     {
-        eeprom_device_t *new_eeprom_device = malloc(sizeof(eeprom_device_t));
+        device->instance = malloc(sizeof(eeprom_device_instance_t));
 
-        if (!new_eeprom_device)
+        if (!device->instance)
         {
             thread_unlock();
 
-            return;
+            return NULL;
         }
 
-        new_eeprom_device->function_table = &eeprom_device_function_table;
-        new_eeprom_device->reference_count = 1;
-        new_eeprom_device->io_task.status = IO_INACTIVE;
-
-        eeprom_device = (device_t*) new_eeprom_device;
+        device->instance->reference_count = 1;
+        device->instance->io_task.status = IO_INACTIVE;
     }
     else
     {
-        ++eeprom_device->reference_count;
+        ++device->instance->reference_count;
+    }
+
+    thread_unlock();
+
+    return device_base;
+}
+
+static void eeprom_device_close(device_t *device_base)
+{
+    eeprom_device_t *device = (eeprom_device_t*) device_base;
+
+    thread_lock();
+
+    if (!device->instance)
+    {
+        thread_unlock();
+
+        return;
+    }
+
+    if (!--device->instance->reference_count)
+    {
+        free(device->instance);
+        device->instance = NULL;
     }
 
     thread_unlock();
@@ -103,12 +141,19 @@ static size_t eeprom_device_read(device_t *device_base, uint16_t offset, uint8_t
 
     cli();
 
-    if (device->io_task.status)
+    if (!device->instance)
+    {
+        sei();
+
+        return -1;
+    }
+
+    if (device->instance->io_task.status)
     {
         exit(ERR_IO_READ_DUP);
     }
 
-    device->io_task.status = IO_READ;
+    device->instance->io_task.status = IO_READ;
 
     sei();
 
@@ -119,11 +164,7 @@ static size_t eeprom_device_read(device_t *device_base, uint16_t offset, uint8_t
         *(buffer++) = eeprom_read_byte((uint8_t*) offset++);
     }
 
-    cli();
-
-    device->io_task.status = IO_INACTIVE;
-
-    sei();
+    device->instance->io_task.status = IO_INACTIVE;
 
     return count;
 }
@@ -154,31 +195,38 @@ static size_t eeprom_device_write(device_t *device_base, uint16_t offset, const 
 
     cli();
 
-    if (device->io_task.status)
+    if (!device->instance)
+    {
+        sei();
+
+        return -1;
+    }
+
+    if (device->instance->io_task.status)
     {
         exit(ERR_IO_WRITE_DUP);
     }
 
-    device->io_task.device_offset = offset;
-    device->io_task.buffer_offset = 0;
+    device->instance->io_task.device_offset = offset;
+    device->instance->io_task.buffer_offset = 0;
 
     if (!(EECR & (1 << EEPE)))
     {
         EEAR = (uint8_t) offset;
         EECR |= (1 << EERE);
 
-        if (EEDR != buffer[device->io_task.buffer_offset])
+        if (EEDR != buffer[device->instance->io_task.buffer_offset])
         {
-            EEDR = buffer[device->io_task.buffer_offset];
+            EEDR = buffer[device->instance->io_task.buffer_offset];
 
             EECR |= (1 << EEMPE);
             EECR |= (1 << EEPE);
         }
 
-        ++device->io_task.device_offset;
-        ++device->io_task.buffer_offset;
+        ++device->instance->io_task.device_offset;
+        ++device->instance->io_task.buffer_offset;
 
-        if (device->io_task.buffer_offset == count)
+        if (device->instance->io_task.buffer_offset == count)
         {
             sei();
 
@@ -186,13 +234,13 @@ static size_t eeprom_device_write(device_t *device_base, uint16_t offset, const 
         }
     }
 
-    device->io_task.status = IO_WRITE;
-    device->io_task.buffer = (uint8_t*) buffer;
-    device->io_task.buffer_length = count;
+    device->instance->io_task.status = IO_WRITE;
+    device->instance->io_task.buffer = (uint8_t*) buffer;
+    device->instance->io_task.buffer_length = count;
 
     EECR |= (1 << EERIE);
 
-    int bytes_transferred = io_dispatch(&device->io_task, timeout);
+    int bytes_transferred = io_dispatch(&device->instance->io_task, timeout);
 
     EECR &= ~(1 << EERIE);
 
@@ -206,37 +254,35 @@ ISR(EE_READY_vect)
 {
     SAVE_FIRST_HALF_CONTEXT_ISR();
 
-    eeprom_device_t *device = (eeprom_device_t*) eeprom_device;
-
-    EEAR = (uint8_t) device->io_task.device_offset;
+    EEAR = (uint8_t) eeprom_device_struct.instance->io_task.device_offset;
     EECR |= (1 << EERE);
 
-    if (EEDR != device->io_task.buffer[device->io_task.buffer_offset])
+    if (EEDR != eeprom_device_struct.instance->io_task.buffer[eeprom_device_struct.instance->io_task.buffer_offset])
     {
-        EEDR = device->io_task.buffer[device->io_task.buffer_offset];
+        EEDR = eeprom_device_struct.instance->io_task.buffer[eeprom_device_struct.instance->io_task.buffer_offset];
 
         EECR |= (1 << EEMPE);
         EECR |= (1 << EEPE);
     }
 
-    ++device->io_task.device_offset;
-    ++device->io_task.buffer_offset;
+    ++eeprom_device_struct.instance->io_task.device_offset;
+    ++eeprom_device_struct.instance->io_task.buffer_offset;
 
-    if (device->io_task.buffer_offset != device->io_task.buffer_length)
+    if (eeprom_device_struct.instance->io_task.buffer_offset != eeprom_device_struct.instance->io_task.buffer_length)
     {
         JUMP(thread_restore_first_half_dispatch);
     }
 
     EECR &= ~(1 << EERIE);
 
-    device->io_task.status = IO_INACTIVE;
+    eeprom_device_struct.instance->io_task.status = IO_INACTIVE;
 
-    if (device->io_task.timer_id != OBJECT_ID_INVALID)
+    if (eeprom_device_struct.instance->io_task.timer_id != OBJECT_ID_INVALID)
     {
-        timer_cancel(device->io_task.timer_id);
+        timer_cancel(eeprom_device_struct.instance->io_task.timer_id);
     }
 
-    thread_queue(device->io_task.thread_id);
+    thread_queue(eeprom_device_struct.instance->io_task.thread_id);
 
     if (!thread_select_if())
     {

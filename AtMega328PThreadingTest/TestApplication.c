@@ -82,15 +82,25 @@ void thread_root_entry(void *unused_arguments)
     memcpy_P(__malloc_heap_end - 12, PSTR("<malloc end>"), 12);
 
     uart_initialize(UART_BAUD, UART_FLAGS);
-    eeprom_initialize();
+    stdio_initialize((device_t*) uart_device);
+
     mutex_initialize(&io_mutex);
     event_initialize(&test_event, EVENT_AUTO_RESET);
 
-    stdio_initialize((device_t*) uart_device);
     null_file = create_file((device_t*) null_device);
     zero_file = create_file((device_t*) zero_device);
-    eeprom_file = create_file(eeprom_device);
+    eeprom_file = create_file((device_t*) eeprom_device);
     flash_file = create_file((device_t*) flash_device);
+
+    FILE *e2 = create_file((device_t*) eeprom_device);
+    FILE *e3 = create_file((device_t*) eeprom_device);
+    FILE *e4 = create_file((device_t*) eeprom_device);
+
+    fclose(e2);
+    fclose(e3);
+    fclose(e4);
+    fclose(eeprom_file);
+    eeprom_file = create_file((device_t*) eeprom_device);
 
     fgetc(null_file);
     fputc(5, null_file);
