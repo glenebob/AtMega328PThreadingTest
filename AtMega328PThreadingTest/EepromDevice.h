@@ -4,6 +4,4 @@
 
 #include "Io.h"
 
-extern device_t *eeprom_device;
-
-void eeprom_initialize(void);
+extern const device_t *eeprom_device;

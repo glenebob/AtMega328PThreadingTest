@@ -12,6 +12,40 @@
 
 #include "Io.h"
 
+device_t *device_open(device_t *device)
+{
+    if (device == NULL)
+    {
+        return NULL;
+    }
+
+    device_open_f open_function = device->function_table->open;
+
+    if (open_function)
+    {
+        return open_function(device);
+    }
+    else
+    {
+        return device;
+    }
+}
+
+void device_close(device_t *device)
+{
+    if (device == NULL)
+    {
+        return;
+    }
+
+    device_close_f close_function = device->function_table->close;
+
+    if (close_function)
+    {
+        close_function(device);
+    }
+}
+
 size_t device_read(device_t *device, uint16_t offset, uint8_t *buffer, uint8_t count, uint16_t timeout)
 {
     if (device == NULL)

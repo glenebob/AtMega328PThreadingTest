@@ -12,6 +12,8 @@ static bool flash_device_info(device_t *device, uint8_t *flags, uint16_t *size);
 
 static const __flash device_function_table_t flash_device_function_table =
 {
+    .open = NULL,
+    .close = NULL,
     .read = flash_device_read,
     .write = NULL,
     .info = flash_device_info

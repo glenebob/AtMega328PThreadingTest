@@ -44,29 +44,6 @@ file_t stdout_err_file;
 
 static uint16_t default_read_timeout;
 
-int fclose(FILE *file)
-{
-    // TODO: Implement this completely.
-    // The underlying device must be notified so it can manage its
-    // memory and reference count.
-
-    if (!file)
-    {
-        return -1;
-    }
-
-    thread_lock();
-
-    if (file->flags & __SMALLOC)
-    {
-        free(file);
-    }
-
-    thread_unlock();
-
-    return 0;
-}
-
 FILE *create_file(device_t *device)
 {
     if (!device)
@@ -75,6 +52,13 @@ FILE *create_file(device_t *device)
     }
 
     thread_lock();
+
+    if (!device_open(device))
+    {
+        thread_unlock();
+
+        return NULL;
+    }
 
     uint8_t device_flags;
     uint16_t device_size;
@@ -106,6 +90,8 @@ FILE *create_file(device_t *device)
 
     if (!file)
     {
+        device_close(device);
+
         thread_unlock();
 
         return NULL;
@@ -129,8 +115,36 @@ FILE *create_file(device_t *device)
     return file;
 }
 
+int fclose(FILE *file)
+{
+    if (!file)
+    {
+        return -1;
+    }
+
+    file_info_seek_t *file_info = (file_info_seek_t*) &file->udata;
+
+    thread_lock();
+
+    device_close(file_info->device);
+
+    if (file->flags & __SMALLOC)
+    {
+        free(file);
+    }
+
+    thread_unlock();
+
+    return 0;
+}
+
 void stdio_initialize(device_t *device)
 {
+    if (!device_open(device))
+    {
+        return;
+    }
+
     fdev_setup_stream((FILE*) &stdin_file, NULL, file_getchar, _FDEV_SETUP_READ);
 
     stdin_file.size = 0;
@@ -146,17 +160,33 @@ void stdio_initialize(device_t *device)
     stderr = (FILE*) &stdout_err_file;
 };
 
-void stdio_crash_init(device_t *device)
+void stdio_crash_initialize(device_t *device)
 {
-    fdev_setup_stream((FILE*) &stdin_file, NULL, NULL, 0);
+    if (stdin)
+    {
+        fclose(stdin);
+        stdin = NULL;
+    }
+
+    if (stdout)
+    {
+        stdout = NULL;
+    }
+
+    if (!stderr)
+    {
+        if (!device_open(device))
+        {
+            return;
+        }
+
+        stderr = (FILE*) &stdout_err_file;
+    }
+
     fdev_setup_stream((FILE*) &stdout_err_file, file_putchar, NULL, _FDEV_SETUP_WRITE);
 
     stdout_err_file.size = 0;
     stdout_err_file.file_info.device = device;
-
-    stdin = NULL;
-    stdout = NULL;
-    stderr = (FILE*) &stdout_err_file;
 }
 
 void stdin_set_getchar_timeout(uint16_t timeout)

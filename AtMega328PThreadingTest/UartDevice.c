@@ -19,12 +19,19 @@
 
 typedef struct
 {
-    const __flash device_function_table_t *function_table;
     uint8_t reference_count;
     io_task_t io_task;
+} uart_device_instance_t;
+
+typedef struct
+{
+    const __flash device_function_table_t *function_table;
     uint8_t flags;
+    uart_device_instance_t *instance;
 } uart_device_t;
 
+static device_t *uart_device_open(device_t *device);
+static void uart_device_close(device_t *device);
 static size_t uart_device_read(device_t *device, uint16_t offset, uint8_t *buffer, uint8_t count, uint16_t timeout);
 static size_t uart_device_write(device_t *device, uint16_t offset, const uint8_t *buffer, uint8_t count, uint16_t timeout);
 static size_t uart_device_write_spin(device_t *device_base, uint16_t offset, const uint8_t *buffer, uint8_t count, uint16_t timeout);
@@ -33,6 +40,8 @@ static bool uart_device_info_spin(device_t *device, uint8_t *flags, uint16_t *si
 
 static const __flash device_function_table_t uart_device_function_table =
 {
+    .open = uart_device_open,
+    .close = uart_device_close,
     .read = uart_device_read,
     .write = uart_device_write,
     .info = uart_device_info
@@ -40,13 +49,20 @@ static const __flash device_function_table_t uart_device_function_table =
 
 static const __flash device_function_table_t uart_device_function_table_spin =
 {
+    .open = uart_device_open,
+    .close = NULL,
     .read = NULL,
     .write = uart_device_write_spin,
     .info = uart_device_info_spin
 };
 
-static uart_device_t uart_device_struct;
-const device_t *uart_device;
+static uart_device_t uart_device_struct =
+{
+    .function_table = NULL,
+    .instance = NULL
+};
+
+const device_t *uart_device = (device_t*) &uart_device_struct;
 
 static uint16_t calculate_baud_rate(uint32_t baud)
 {
@@ -66,13 +82,10 @@ void uart_initialize(uint32_t baud, uint8_t flags)
     UCSR0B = (1 << RXEN0) | (1 << TXEN0);
 
     uart_device_struct.function_table = &uart_device_function_table;
-    uart_device_struct.io_task.status = IO_INACTIVE;
     uart_device_struct.flags = flags;
-
-    uart_device = (device_t*) &uart_device_struct;
 };
 
-void uart_crash_init(uint32_t baud, uint8_t flags)
+void uart_crash_initialize(uint32_t baud, uint8_t flags)
 {
     uint16_t baud_rate = calculate_baud_rate(baud);
 
@@ -85,8 +98,64 @@ void uart_crash_init(uint32_t baud, uint8_t flags)
     UCSR0B = (1 << TXEN0);
 
     uart_device_struct.function_table = &uart_device_function_table_spin;
-    uart_device_struct.io_task.status = IO_INACTIVE;
     uart_device_struct.flags = flags;
+
+    if (uart_device_struct.instance)
+    {
+        uart_device_struct.instance->io_task.status = IO_INACTIVE;
+    }
+}
+
+device_t *uart_device_open(device_t *device_base)
+{
+    uart_device_t *device = (uart_device_t*) device_base;
+
+    thread_lock();
+
+    if (!device->instance)
+    {
+        device->instance = malloc(sizeof(uart_device_instance_t));
+
+        if (!device->instance)
+        {
+            thread_unlock();
+
+            return NULL;
+        }
+
+        device->instance->reference_count = 1;
+        device->instance->io_task.status = IO_INACTIVE;
+    }
+    else
+    {
+        ++device->instance->reference_count;
+    }
+
+    thread_unlock();
+
+    return device_base;
+}
+
+static void uart_device_close(device_t *device_base)
+{
+    uart_device_t *device = (uart_device_t*) device_base;
+
+    thread_lock();
+
+    if (!device->instance)
+    {
+        thread_unlock();
+
+        return;
+    }
+
+    if (!--device->instance->reference_count)
+    {
+        free(device->instance);
+        device->instance = NULL;
+    }
+
+    thread_unlock();
 }
 
 bool uart_device_info(device_t *device, uint8_t *flags, uint16_t *size)
@@ -131,12 +200,19 @@ static size_t uart_device_read(device_t *device_base, uint16_t offset, uint8_t *
 
     cli();
 
-    if (device->io_task.status)
+    if (!device->instance)
+    {
+        sei();
+
+        return -1;
+    }
+
+    if (device->instance->io_task.status)
     {
         exit(ERR_IO_READ_DUP);
     }
 
-    device->io_task.buffer_offset = 0;
+    device->instance->io_task.buffer_offset = 0;
 
     if (UCSR0A & (1 << RXC0))
     {
@@ -150,9 +226,9 @@ static size_t uart_device_read(device_t *device_base, uint16_t offset, uint8_t *
             }
         }
 
-        buffer[device->io_task.buffer_offset++] = b;
+        buffer[device->instance->io_task.buffer_offset++] = b;
 
-        if (device->io_task.buffer_offset == count)
+        if (device->instance->io_task.buffer_offset == count)
         {
             sei();
 
@@ -160,13 +236,13 @@ static size_t uart_device_read(device_t *device_base, uint16_t offset, uint8_t *
         }
     }
 
-    device->io_task.status = IO_READ;
-    device->io_task.buffer = buffer;
-    device->io_task.buffer_length = count;
+    device->instance->io_task.status = IO_READ;
+    device->instance->io_task.buffer = buffer;
+    device->instance->io_task.buffer_length = count;
 
     UCSR0B |= (1 << RXCIE0);
 
-    int bytes_transferred = io_dispatch(&device->io_task, timeout);
+    int bytes_transferred = io_dispatch(&device->instance->io_task, timeout);
 
     UCSR0B &= ~(1 << RXCIE0);
 
@@ -191,32 +267,39 @@ static size_t uart_device_write(device_t *device_base, uint16_t offset, const ui
 
     cli();
 
-    if (device->io_task.status)
+    if (!device->instance)
+    {
+        sei();
+
+        return -1;
+    }
+
+    if (device->instance->io_task.status)
     {
         exit(ERR_IO_WRITE_DUP);
     }
 
-    device->io_task.buffer_offset = 0;
+    device->instance->io_task.buffer_offset = 0;
 
     if (UCSR0A & (1 << UDRE0))
     {
-        UDR0 = buffer[device->io_task.buffer_offset++];
+        UDR0 = buffer[device->instance->io_task.buffer_offset++];
         
-        if (device->io_task.buffer_offset == count)
+        if (device->instance->io_task.buffer_offset == count)
         {
             sei();
-            
+
             return count;
         }
     }
 
-    device->io_task.status = IO_WRITE;
-    device->io_task.buffer = (uint8_t*) buffer;
-    device->io_task.buffer_length = count;
+    device->instance->io_task.status = IO_WRITE;
+    device->instance->io_task.buffer = (uint8_t*) buffer;
+    device->instance->io_task.buffer_length = count;
 
     UCSR0B |= (1 << UDRIE0);
 
-    int bytes_transferred = io_dispatch(&device->io_task, timeout);
+    int bytes_transferred = io_dispatch(&device->instance->io_task, timeout);
 
     UCSR0B &= ~(1 << UDRIE0);
 
@@ -257,14 +340,14 @@ static size_t uart_device_write_spin(device_t *device, uint16_t offset, const ui
 __attribute__((naked))
 static void io_interrupt_common(void)
 {
-    uart_device_struct.io_task.status = IO_INACTIVE;
+    uart_device_struct.instance->io_task.status = IO_INACTIVE;
 
-    if (uart_device_struct.io_task.timer_id != OBJECT_ID_INVALID)
+    if (uart_device_struct.instance->io_task.timer_id != OBJECT_ID_INVALID)
     {
-        timer_cancel(uart_device_struct.io_task.timer_id);
+        timer_cancel(uart_device_struct.instance->io_task.timer_id);
     }
 
-    thread_queue(uart_device_struct.io_task.thread_id);
+    thread_queue(uart_device_struct.instance->io_task.thread_id);
 
     if (!thread_select_if())
     {
@@ -294,9 +377,9 @@ ISR(USART_RX_vect)
         }
     }
 
-    uart_device_struct.io_task.buffer[uart_device_struct.io_task.buffer_offset++] = b;
+    uart_device_struct.instance->io_task.buffer[uart_device_struct.instance->io_task.buffer_offset++] = b;
 
-    if (uart_device_struct.io_task.buffer_offset != uart_device_struct.io_task.buffer_length)
+    if (uart_device_struct.instance->io_task.buffer_offset != uart_device_struct.instance->io_task.buffer_length)
     {
         JUMP(thread_restore_first_half_dispatch);
     }
@@ -311,9 +394,9 @@ ISR(USART_UDRE_vect)
 {
     SAVE_FIRST_HALF_CONTEXT_ISR();
 
-    UDR0 = uart_device_struct.io_task.buffer[uart_device_struct.io_task.buffer_offset++];
+    UDR0 = uart_device_struct.instance->io_task.buffer[uart_device_struct.instance->io_task.buffer_offset++];
 
-    if (uart_device_struct.io_task.buffer_offset != uart_device_struct.io_task.buffer_length)
+    if (uart_device_struct.instance->io_task.buffer_offset != uart_device_struct.instance->io_task.buffer_length)
     {
         JUMP(thread_restore_first_half_dispatch);
     }
