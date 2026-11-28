@@ -351,7 +351,7 @@ static void io_interrupt_common(void)
 
     if (!thread_select_if())
     {
-        JUMP(thread_restore_first_half_dispatch);
+        JUMP(thread_restore_first_half_reti);
     }
 
     SAVE_SECOND_HALF_CONTEXT();
@@ -365,7 +365,7 @@ static void io_interrupt_common(void)
 __attribute__((naked))
 ISR(USART_RX_vect)
 {
-    SAVE_FIRST_HALF_CONTEXT_ISR();
+    SAVE_FIRST_HALF_CONTEXT();
 
     uint8_t b = UDR0;
 
@@ -381,7 +381,7 @@ ISR(USART_RX_vect)
 
     if (uart_device_struct.instance->io_task.buffer_offset != uart_device_struct.instance->io_task.buffer_length)
     {
-        JUMP(thread_restore_first_half_dispatch);
+        JUMP(thread_restore_first_half_reti);
     }
 
     UCSR0B &= ~(1 << RXCIE0);
@@ -392,13 +392,13 @@ ISR(USART_RX_vect)
 __attribute__((naked))
 ISR(USART_UDRE_vect)
 {
-    SAVE_FIRST_HALF_CONTEXT_ISR();
+    SAVE_FIRST_HALF_CONTEXT();
 
     UDR0 = uart_device_struct.instance->io_task.buffer[uart_device_struct.instance->io_task.buffer_offset++];
 
     if (uart_device_struct.instance->io_task.buffer_offset != uart_device_struct.instance->io_task.buffer_length)
     {
-        JUMP(thread_restore_first_half_dispatch);
+        JUMP(thread_restore_first_half_reti);
     }
 
     UCSR0B &= ~(1 << UDRIE0);

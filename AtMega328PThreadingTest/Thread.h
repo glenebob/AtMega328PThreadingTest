@@ -45,6 +45,7 @@ bool thread_select_if(void);
 void thread_change(void);
 void thread_yield_dispatch(void);
 void thread_post_kernel_task(task_handler_t handler, void *arguments);
+void thread_restore_first_half_reti(void);
 void thread_restore_first_half_dispatch(void);
 void thread_restore_all_dispatch(void);
 void thread_kernel_entry(thread_entry_t root_thread_entry);

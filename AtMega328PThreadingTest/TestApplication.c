@@ -27,7 +27,8 @@ static const __flash char string_iterations[] = "%s: Iterations: %lu, Read: %lu,
 
 static const __flash char string_wheee[] =
     "Begin big single write\n"
-    "Wheeeeeeeeeeeeeeeeeeeeee!\n"
+    "Wheeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\n"
+    "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee!\n"
     "End big single write\n";
 
 mutex_t io_mutex;
@@ -101,6 +102,15 @@ void thread_root_entry(void *unused_arguments)
     fclose(e4);
     fclose(eeprom_file);
     eeprom_file = create_file((device_t*) eeprom_device);
+
+    /*
+    for (int i = 0; i <= E2END; ++i)
+    {
+        fputc(0xFF, eeprom_file);
+    }
+
+    fseek(eeprom_file, 0, SEEK_SET);
+    */
 
     fgetc(null_file);
     fputc(5, null_file);

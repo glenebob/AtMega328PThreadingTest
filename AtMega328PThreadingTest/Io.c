@@ -66,7 +66,6 @@ size_t device_write(device_t *device, uint16_t offset, const uint8_t *buffer, ui
     return device->function_table->write(device, offset, buffer, count, timeout);
 }
 
-
 int io_dispatch(io_task_t *io_task, uint16_t timeout)
 {
     if (thread_lock_count)

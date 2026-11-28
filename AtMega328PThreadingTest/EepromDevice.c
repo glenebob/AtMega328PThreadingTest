@@ -157,12 +157,7 @@ static size_t eeprom_device_read(device_t *device_base, uint16_t offset, uint8_t
 
     sei();
 
-    uint8_t remaining = count;
-
-    while (remaining--)
-    {
-        *(buffer++) = eeprom_read_byte((uint8_t*) offset++);
-    }
+    eeprom_read_block(buffer, (const void*) offset, count);
 
     device->instance->io_task.status = IO_INACTIVE;
 
@@ -252,7 +247,7 @@ static size_t eeprom_device_write(device_t *device_base, uint16_t offset, const 
 __attribute__((naked))
 ISR(EE_READY_vect)
 {
-    SAVE_FIRST_HALF_CONTEXT_ISR();
+    SAVE_FIRST_HALF_CONTEXT();
 
     EEAR = (uint8_t) eeprom_device_struct.instance->io_task.device_offset;
     EECR |= (1 << EERE);
@@ -270,7 +265,7 @@ ISR(EE_READY_vect)
 
     if (eeprom_device_struct.instance->io_task.buffer_offset != eeprom_device_struct.instance->io_task.buffer_length)
     {
-        JUMP(thread_restore_first_half_dispatch);
+        JUMP(thread_restore_first_half_reti);
     }
 
     EECR &= ~(1 << EERIE);
@@ -286,7 +281,7 @@ ISR(EE_READY_vect)
 
     if (!thread_select_if())
     {
-        JUMP(thread_restore_first_half_dispatch);
+        JUMP(thread_restore_first_half_reti);
     }
 
     SAVE_SECOND_HALF_CONTEXT();

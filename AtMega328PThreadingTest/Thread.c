@@ -19,7 +19,7 @@
 #include "Thread.h"
 
 #define STACK_SIZE_KERNEL 256
-#define STACK_SIZE_IDLE 256
+#define STACK_SIZE_IDLE 48
 #define STACK_SIZE_USER 256
 
 #define THREAD_USER_TICKS 10
@@ -453,7 +453,15 @@ void thread_post_kernel_task(task_handler_t handler, void *arguments)
 
 // Must be jumped to
 __attribute__((naked))
-void thread_restore_first_half_dispatch()
+void thread_restore_first_half_reti(void)
+{
+    RESTORE_FIRST_HALF_CONTEXT();
+    reti();
+}
+
+// Must be jumped to
+__attribute__((naked))
+void thread_restore_first_half_dispatch(void)
 {
     RESTORE_FIRST_HALF_CONTEXT();
     RETURN();
@@ -461,7 +469,7 @@ void thread_restore_first_half_dispatch()
 
 // Must be jumped to
 __attribute__((naked))
-void thread_restore_all_dispatch()
+void thread_restore_all_dispatch(void)
 {
     RESTORE_STACK_POINTER();
     RESTORE_SECOND_HALF_CONTEXT();
@@ -505,14 +513,14 @@ static void advance_thread_ticks(void)
 __attribute__((naked))
 ISR(TIMER0_COMPA_vect)
 {
-    SAVE_FIRST_HALF_CONTEXT_ISR();
+    SAVE_FIRST_HALF_CONTEXT();
 
     advance_active_timers();
     advance_thread_ticks();
 
     if (!thread_select_if())
     {
-        JUMP(thread_restore_first_half_dispatch);
+        JUMP(thread_restore_first_half_reti);
     }
 
     SAVE_SECOND_HALF_CONTEXT();
